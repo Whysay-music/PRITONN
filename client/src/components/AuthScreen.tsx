@@ -147,7 +147,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       onLoginSuccess(data);
     } catch (err: unknown) {
       if (err instanceof Error) {
-        setError(err.message);
+        const msg = err.message;
+        if (msg.includes('JSON') || msg.includes('doctype') || msg.includes('token') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          setError(`Не удалось связаться с сервером PRITONN (${getApiUrl()}). Проверьте интернет или смените адрес через значок глобуса 🌐`);
+        } else {
+          setError(msg);
+        }
       } else {
         setError('Неизвестная ошибка подключения к серверу');
       }
@@ -199,7 +204,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       onLoginSuccess(data);
     } catch (err: unknown) {
       if (err instanceof Error) {
-        setError(err.message);
+        const msg = err.message;
+        if (msg.includes('JSON') || msg.includes('doctype') || msg.includes('token') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          setError(`Не удалось связаться с сервером PRITONN (${getApiUrl()}). Проверьте интернет или смените адрес через значок глобуса 🌐`);
+        } else {
+          setError(msg);
+        }
       } else {
         setError('Неизвестная ошибка подключения к серверу');
       }

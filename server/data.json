@@ -130,9 +130,9 @@
       "avatar": "https://api.dicebear.com/7.x/notionists/svg?seed=proverka",
       "bio": "Пользователь PRITONN",
       "verified": false,
-      "online": true,
-      "lastSeen": "в сети",
-      "lastSeenTimestamp": null,
+      "online": false,
+      "lastSeen": "был(а) только что",
+      "lastSeenTimestamp": 1794015917665,
       "isPremium": false,
       "emojiStatus": "👑"
     },

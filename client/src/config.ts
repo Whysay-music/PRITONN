@@ -24,8 +24,8 @@ export const getApiUrl = (): string => {
     return DEFAULT_ONLINE_SERVER;
   }
 
-  // 4. When running inside Desktop Electron with file://
-  if (window.location.protocol === 'file:') {
+  // 4. When running inside Desktop Electron with file:// or electronAPI
+  if ((window as any).electronAPI || window.location.protocol === 'file:') {
     return DEFAULT_ONLINE_SERVER;
   }
 

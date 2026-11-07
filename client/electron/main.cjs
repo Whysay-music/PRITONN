@@ -93,6 +93,27 @@ ipcMain.on('window-close', () => {
   if (mainWindow) mainWindow.close();
 });
 
+// Provide list of screens and windows with thumbnails for user selection
+ipcMain.handle('get-desktop-sources', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 360, height: 200 },
+      fetchWindowIcons: true,
+    });
+    return sources.map((s) => ({
+      id: s.id,
+      name: s.name,
+      thumbnail: s.thumbnail.toDataURL(),
+      appIcon: s.appIcon ? s.appIcon.toDataURL() : null,
+      display_id: s.display_id,
+    }));
+  } catch (err) {
+    console.error('Error fetching desktop sources:', err);
+    return [];
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
 

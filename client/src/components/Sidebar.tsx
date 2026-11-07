@@ -481,9 +481,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             {isSentByMe ? (
                               <span className="inline-flex items-center mr-1">
                                 {lastMsg?.status === 'read' ? (
-                                  <CheckCheck size={14} className={`animate-check-pop ${isActive ? 'text-white' : 'text-[#5288c1]'}`} />
+                                  <CheckCheck size={14} className={isActive ? 'text-white' : 'text-[#5288c1]'} />
                                 ) : (
-                                  <Check size={14} className={`animate-check-pop ${isActive ? 'text-white' : ''}`} />
+                                  <Check size={14} className={isActive ? 'text-white' : ''} />
                                 )}
                                 <span className={`ml-1 font-medium ${isActive ? 'text-white' : 'text-[#5288c1]'}`}>Вы: </span>
                               </span>

@@ -14,16 +14,21 @@ import {
   Minimize2,
   Minus,
   Tv,
+  UserPlus,
+  Check,
+  X,
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { Chat, User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { isUserVerified } from '../utils/verified';
+import { ScreenSharePickerModal, DesktopSource } from './ScreenSharePickerModal';
 
 interface VoiceCallModalProps {
   chat: Chat | null;
   targetUser?: User | null;
   currentUser?: User | null;
+  allUsers?: User[];
   socket?: Socket | null;
   isIncomingAccepted?: boolean;
   onClose: () => void;
@@ -34,6 +39,9 @@ const ICE_SERVERS = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
   ],
 };
 
@@ -41,6 +49,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   chat,
   targetUser: propTargetUser,
   currentUser,
+  allUsers = [],
   socket,
   isIncomingAccepted = false,
   onClose,
@@ -66,6 +75,14 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const [visualizerHeights, setVisualizerHeights] = useState<number[]>([
     8, 14, 10, 18, 12, 16, 20, 14, 18, 15, 10, 19,
   ]);
+
+  // Screen share picker & in-call friend invites
+  const [isScreenPickerOpen, setIsScreenPickerOpen] = useState(false);
+  const [desktopSources, setDesktopSources] = useState<DesktopSource[]>([]);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteSearch, setInviteSearch] = useState('');
+  const [invitedUserIds, setInvitedUserIds] = useState<string[]>([]);
+  const [inviteToast, setInviteToast] = useState<string | null>(null);
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -129,6 +146,21 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       }
     }
   }, []);
+
+  // Callback ref for remote audio to guarantee immediate autoplay even if track arrived before DOM mount
+  const setRemoteAudio = useCallback((node: HTMLAudioElement | null) => {
+    remoteAudioRef.current = node;
+    if (node) {
+      node.muted = !isSpeakerOn;
+      node.volume = 1.0;
+      if (remoteStreamRef.current) {
+        node.srcObject = remoteStreamRef.current;
+        node.play().catch((err) => {
+          console.warn('Audio play prevented on mount, waiting for user interaction:', err);
+        });
+      }
+    }
+  }, [isSpeakerOn]);
 
   // Stop ringtone helper
   const stopRingtone = useCallback(() => {
@@ -275,7 +307,11 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         remoteStreamRef.current = stream;
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = stream;
-          remoteAudioRef.current.play().catch(() => {});
+          remoteAudioRef.current.muted = !isSpeakerOn;
+          remoteAudioRef.current.volume = 1.0;
+          remoteAudioRef.current.play().catch((err) => {
+            console.warn('Audio play error in ontrack:', err);
+          });
         }
       }
     };
@@ -294,18 +330,32 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         isCallConnectedRef.current = true;
         setStatus('active');
         stopRingtone();
+        if (remoteAudioRef.current && remoteStreamRef.current) {
+          remoteAudioRef.current.srcObject = remoteStreamRef.current;
+          remoteAudioRef.current.play().catch(() => {});
+        }
       }
     };
 
     return pc;
-  }, [socket, targetUserId, stopRingtone]);
+  }, [socket, targetUserId, stopRingtone, isSpeakerOn]);
 
   // Acquire local media stream and bind to PeerConnection
   const setupLocalMedia = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: isVideoEnabled,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: isVideoEnabled
+          ? {
+              facingMode: 'user',
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+            }
+          : false,
       });
       localStreamRef.current = stream;
 
@@ -759,10 +809,131 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     }
   };
 
-  // Start Screen Share with renegotiation & ultra-fast canvas frame streaming
+  // Stream setup helper for both full screen & individual window selection
+  const startStreamWithMedia = async (screenStream: MediaStream) => {
+    screenStreamRef.current = screenStream;
+    setIsScreenSharing(true);
+    setIsMinimized(false);
+
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = screenStream;
+      localVideoRef.current.play().catch(() => {});
+    }
+
+    // 100% Reliable, Zero Black Screen Canvas Frame Streaming Engine
+    const captureVideo = document.createElement('video');
+    captureVideo.muted = true;
+    captureVideo.autoplay = true;
+    captureVideo.playsInline = true;
+    captureVideo.srcObject = screenStream;
+    captureVideo.play().catch(() => {});
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
+    frameIntervalRef.current = setInterval(() => {
+      if (
+        !screenStreamRef.current ||
+        screenStreamRef.current.getVideoTracks().length === 0 ||
+        screenStreamRef.current.getVideoTracks()[0].readyState !== 'live'
+      ) {
+        stopScreenSharing();
+        return;
+      }
+      if (captureVideo.videoWidth > 0 && captureVideo.videoHeight > 0) {
+        const maxDim = 1280;
+        let w = captureVideo.videoWidth;
+        let h = captureVideo.videoHeight;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w);
+            w = maxDim;
+          } else {
+            w = Math.round((w * maxDim) / h);
+            h = maxDim;
+          }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        if (ctx) {
+          ctx.drawImage(captureVideo, 0, 0, w, h);
+          const frameData = canvas.toDataURL('image/jpeg', 0.65);
+          if (socket && targetUserId && currentUser) {
+            socket.emit('screen_stream_frame', {
+              targetUserId,
+              frame: frameData,
+              senderId: currentUser.id,
+              senderName: currentUser.name,
+            });
+          }
+        }
+      }
+    }, 65);
+
+    const pc = initPeerConnection();
+    const videoTrack = screenStream.getVideoTracks()[0];
+    const senders = pc.getSenders();
+    const videoSender =
+      senders.find((s) => s.track && s.track.kind === 'video') ||
+      senders.find((s) => !s.track);
+    if (videoSender) {
+      await videoSender.replaceTrack(videoTrack).catch(() => {});
+    } else {
+      try {
+        pc.addTrack(videoTrack, screenStream);
+      } catch {}
+    }
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      if (socket && targetUserId) {
+        socket.emit('webrtc_offer', {
+          targetUserId,
+          sdp: offer,
+        });
+      }
+    } catch (err) {
+      console.warn('Renegotiation offer error:', err);
+    }
+
+    if (socket && targetUserId && currentUser) {
+      socket.emit('call_screen_share', {
+        callerId: currentUser.id,
+        callerName: currentUser.name,
+        targetUserId,
+        isSharing: true,
+      });
+    }
+
+    const screenVideoTrack = screenStream.getVideoTracks()[0];
+    if (screenVideoTrack) {
+      screenVideoTrack.onended = () => {
+        stopScreenSharing();
+      };
+    }
+  };
+
+  // Start Screen Share with window/screen selection modal on PC
   const handleToggleScreenShare = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!isScreenSharing) {
+      // Check if running inside Electron Desktop with source picker API
+      const electronAPI = (window as unknown as { electronAPI?: { getDesktopSources?: () => Promise<DesktopSource[]> } }).electronAPI;
+      if (electronAPI && typeof electronAPI.getDesktopSources === 'function') {
+        try {
+          const sources = await electronAPI.getDesktopSources();
+          if (sources && sources.length > 0) {
+            setDesktopSources(sources);
+            setIsScreenPickerOpen(true);
+            return;
+          }
+        } catch (err) {
+          console.warn('Error fetching desktop sources in Electron, fallback to getDisplayMedia:', err);
+        }
+      }
+
       if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
         alert(
           'Демонстрация экрана доступна на ПК (Windows / Web). На смартфонах Android можно просматривать трансляцию собеседника.'
@@ -782,102 +953,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
           systemAudio: 'include',
         } as any);
 
-        screenStreamRef.current = screenStream;
-        setIsScreenSharing(true);
-        setIsMinimized(false);
-
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = screenStream;
-          localVideoRef.current.play().catch(() => {});
-        }
-
-        // 100% Reliable, Zero Black Screen Canvas Frame Streaming Engine
-        const captureVideo = document.createElement('video');
-        captureVideo.muted = true;
-        captureVideo.autoplay = true;
-        captureVideo.playsInline = true;
-        captureVideo.srcObject = screenStream;
-        captureVideo.play().catch(() => {});
-
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-
-        if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
-        frameIntervalRef.current = setInterval(() => {
-          if (!screenStreamRef.current || screenStreamRef.current.getVideoTracks().length === 0 || screenStreamRef.current.getVideoTracks()[0].readyState !== 'live') {
-            stopScreenSharing();
-            return;
-          }
-          if (captureVideo.videoWidth > 0 && captureVideo.videoHeight > 0) {
-            const maxDim = 1280;
-            let w = captureVideo.videoWidth;
-            let h = captureVideo.videoHeight;
-            if (w > maxDim || h > maxDim) {
-              if (w > h) {
-                h = Math.round((h * maxDim) / w);
-                w = maxDim;
-              } else {
-                w = Math.round((w * maxDim) / h);
-                h = maxDim;
-              }
-            }
-            canvas.width = w;
-            canvas.height = h;
-            if (ctx) {
-              ctx.drawImage(captureVideo, 0, 0, w, h);
-              const frameData = canvas.toDataURL('image/jpeg', 0.65);
-              if (socket && targetUserId && currentUser) {
-                socket.emit('screen_stream_frame', {
-                  targetUserId,
-                  frame: frameData,
-                  senderId: currentUser.id,
-                  senderName: currentUser.name,
-                });
-              }
-            }
-          }
-        }, 65);
-
-        const pc = initPeerConnection();
-        const videoTrack = screenStream.getVideoTracks()[0];
-        const senders = pc.getSenders();
-        const videoSender = senders.find((s) => s.track && s.track.kind === 'video') || senders.find((s) => !s.track);
-        if (videoSender) {
-          await videoSender.replaceTrack(videoTrack).catch(() => {});
-        } else {
-          try {
-            pc.addTrack(videoTrack, screenStream);
-          } catch {}
-        }
-
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          if (socket && targetUserId) {
-            socket.emit('webrtc_offer', {
-              targetUserId,
-              sdp: offer,
-            });
-          }
-        } catch (err) {
-          console.warn('Renegotiation offer error:', err);
-        }
-
-        if (socket && targetUserId && currentUser) {
-          socket.emit('call_screen_share', {
-            callerId: currentUser.id,
-            callerName: currentUser.name,
-            targetUserId,
-            isSharing: true,
-          });
-        }
-
-        const screenVideoTrack = screenStream.getVideoTracks()[0];
-        if (screenVideoTrack) {
-          screenVideoTrack.onended = () => {
-            stopScreenSharing();
-          };
-        }
+        await startStreamWithMedia(screenStream);
       } catch (err: any) {
         console.warn('Screen share canceled or error:', err);
         if (
@@ -892,6 +968,73 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       }
     } else {
       stopScreenSharing();
+    }
+  };
+
+  // User picked a specific window or screen from the picker
+  const handleSelectDesktopSource = async (source: DesktopSource) => {
+    setIsScreenPickerOpen(false);
+    try {
+      const screenStream = await (navigator.mediaDevices as any).getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: source.id,
+            minWidth: 1280,
+            maxWidth: 1920,
+            minHeight: 720,
+            maxHeight: 1080,
+          },
+        },
+      });
+
+      await startStreamWithMedia(screenStream);
+    } catch (err) {
+      console.warn('Failed to capture chosen window/screen:', err);
+      try {
+        const fallbackStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true,
+        });
+        await startStreamWithMedia(fallbackStream);
+      } catch {}
+    }
+  };
+
+  // Filter available users for in-call invitation
+  const availableUsersToInvite = (allUsers || []).filter(
+    (u) =>
+      u.id !== currentUser?.id &&
+      u.id !== targetUserId &&
+      (u.name.toLowerCase().includes(inviteSearch.toLowerCase()) ||
+        u.username.toLowerCase().includes(inviteSearch.toLowerCase()))
+  );
+
+  // Invite another friend into the call
+  const handleInviteUser = (u: User) => {
+    if (socket && currentUser) {
+      socket.emit('voice_chat_invite', {
+        chatId: chat?.id || `call_${currentUser.id}_${u.id}`,
+        chatName: chat?.displayName || chat?.name || `Звонок с ${currentUser.name}`,
+        inviterName: currentUser.name,
+        inviterId: currentUser.id,
+        targetUserId: u.id,
+      });
+
+      socket.emit('call_user', {
+        callerId: currentUser.id,
+        callerName: currentUser.name,
+        callerAvatar: currentUser.avatar,
+        callerVerified: isUserVerified(currentUser),
+        targetUserId: u.id,
+        chatId: chat?.id,
+        isVideo: isVideoEnabled,
+      });
+
+      setInvitedUserIds((prev) => [...prev, u.id]);
+      setInviteToast(`Приглашение отправлено ${u.name}`);
+      setTimeout(() => setInviteToast(null), 3500);
     }
   };
 
@@ -968,7 +1111,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   if (isMinimized) {
     return (
       <>
-        <audio ref={remoteAudioRef} autoPlay playsInline muted={!isSpeakerOn} />
+        <audio ref={setRemoteAudio} autoPlay playsInline muted={!isSpeakerOn} />
 
         <div
           onClick={() => setIsMinimized(false)}
@@ -1052,7 +1195,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       style={{ zIndex: 9990 }}
       className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 select-none animate-fade-in"
     >
-      <audio ref={remoteAudioRef} autoPlay playsInline muted={!isSpeakerOn} />
+      <audio ref={setRemoteAudio} autoPlay playsInline muted={!isSpeakerOn} />
 
       <div
         ref={modalContainerRef}
@@ -1122,6 +1265,16 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                   {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => setIsInviteModalOpen(true)}
+                className="px-2 py-1.5 rounded-lg bg-[#242f3d] hover:bg-[#2c394a] text-white transition cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+                title="Пригласить участников в звонок"
+              >
+                <UserPlus size={14} className="text-[#5288c1]" />
+                <span className="hidden sm:inline">Позвать</span>
+              </button>
 
               <button
                 type="button"
@@ -1475,6 +1628,15 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             <MonitorUp size={20} />
           </button>
 
+          <button
+            type="button"
+            onClick={() => setIsInviteModalOpen(true)}
+            className="p-3 rounded-full bg-[#242f3d] hover:bg-[#202b36] text-white transition shadow-md cursor-pointer"
+            title="Пригласить участников в звонок"
+          >
+            <UserPlus size={20} />
+          </button>
+
           {isRemoteScreenSharing && !isViewingRemoteScreen && (
             <button
               type="button"
@@ -1486,7 +1648,108 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             </button>
           )}
         </div>
+
+        {/* Toast notification */}
+        {inviteToast && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-xs px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 z-50 animate-pop-in font-medium">
+            <Check size={14} />
+            <span>{inviteToast}</span>
+          </div>
+        )}
+
+        {/* In-call Invite Modal */}
+        {isInviteModalOpen && (
+          <div className="absolute inset-0 z-50 bg-[#17212b]/95 backdrop-blur-md rounded-3xl p-5 flex flex-col animate-fade-in text-[#f5f5f5]">
+            <div className="flex items-center justify-between pb-3 border-b border-[#242f3d]">
+              <div className="flex items-center gap-2">
+                <UserPlus size={18} className="text-[#5288c1]" />
+                <h3 className="font-semibold text-sm">Пригласить в звонок</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsInviteModalOpen(false)}
+                className="p-1 rounded-lg text-[#7f91a4] hover:text-white hover:bg-[#242f3d] transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="my-3">
+              <input
+                type="text"
+                value={inviteSearch}
+                onChange={(e) => setInviteSearch(e.target.value)}
+                placeholder="Поиск по имени или логину..."
+                className="w-full bg-[#0e1621] px-3.5 py-2 rounded-xl border border-[#242f3d] focus:border-[#5288c1] outline-none text-xs text-white placeholder-[#7f91a4]"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 no-scrollbar min-h-0">
+              {availableUsersToInvite.length === 0 ? (
+                <div className="text-center py-8 text-xs text-[#7f91a4]">
+                  Контакты не найдены
+                </div>
+              ) : (
+                availableUsersToInvite.map((u) => {
+                  const isInvited = invitedUserIds.includes(u.id);
+                  return (
+                    <div
+                      key={u.id}
+                      className="flex items-center justify-between p-2 rounded-xl bg-[#0e1621]/60 hover:bg-[#0e1621] border border-white/5 transition"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <img
+                          src={u.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+                          alt={u.name}
+                          className="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-white/10"
+                        />
+                        <div className="truncate text-left">
+                          <p className="text-xs font-semibold text-white truncate flex items-center gap-1">
+                            {u.name}
+                            {isUserVerified(u) && <TelegramVerifiedBadge size={12} />}
+                          </p>
+                          <p className="text-[10px] text-[#7f91a4] truncate">@{u.username}</p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isInvited}
+                        onClick={() => handleInviteUser(u)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1 cursor-pointer active:scale-95 ${
+                          isInvited
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 cursor-default'
+                            : 'bg-[#2481cc] hover:bg-[#1e70b3] text-white shadow-sm'
+                        }`}
+                      >
+                        {isInvited ? (
+                          <>
+                            <Check size={12} />
+                            <span>Вызов отправлен</span>
+                          </>
+                        ) : (
+                          <>
+                            <UserPlus size={12} />
+                            <span>Позвать</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* PC Screen / Application Window Picker Modal */}
+      <ScreenSharePickerModal
+        isOpen={isScreenPickerOpen}
+        sources={desktopSources}
+        onSelectSource={handleSelectDesktopSource}
+        onClose={() => setIsScreenPickerOpen(false)}
+      />
     </div>
   );
 };

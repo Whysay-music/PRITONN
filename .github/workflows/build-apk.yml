@@ -50,28 +50,30 @@ jobs:
 
       - name: Rename APK
         run: |
-          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.8.6.apk
+          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.8.7.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: PRITONN-Android-APK
-          path: PRITONN_v5.8.6.apk
+          path: PRITONN_v5.8.7.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/heads/main')
         with:
-          tag_name: v5.8.6
-          name: PRITONN v5.8.6 (Mobile Responsive & Video Calls)
+          tag_name: v5.8.7
+          name: PRITONN v5.8.7 (Call Improvements & UI Fixes)
           body: |
-            ## 🟣 PRITONN Messenger & Social Platform v5.8.6
+            ## 🟣 PRITONN Messenger v5.8.7
             
-            ### Что нового в версии 5.8.6:
-            - 📱 **Мобильный интерфейс**: На телефонах Android чаты открываются на весь экран, десктопные панели скрыты, добавлена кнопка возврата «Назад» к списку чатов.
-            - 📹 **Видеокамера в звонках**: Полноценный WebRTC видеостриминг — теперь собеседники реально видят трансляцию с камеры друг друга с поддержкой PiP (картинка в картинке).
-            - 🖥️ **Демонстрация экрана на ПК**: Включена системная поддержка трансляции экрана в приложении для Windows (Electron `desktopCapturer`). Собеседники на телефонах могут смотреть демонстрацию экрана в реальном времени.
-            - 🌐 **Постоянный облачный сервер**: Интеграция с хостом Railway (`https://pritonn-production.up.railway.app`).
-          files: PRITONN_v5.8.6.apk
+            ### Что нового в версии 5.8.7:
+            - 🔊 **Изоляция звуков уведомлений**: Звук входящих сообщений воспроизводится только у участников конкретного диалога, чужие переписки больше не вызывают звуки.
+            - 🖥️ **Выбор окна/экрана для демонстрации на ПК**: Полноценный селектор экранов и запущенных приложений с предпросмотром миниатюр.
+            - 👥 **Приглашение друзей в звонок**: Кнопка «Пригласить» в окне звонка с поиском и быстрым вызовом участников.
+            - ⚡ **Устранено мигание при наборе текста**: Оптимизировано сохранение черновиков, удалены резкие анимации перерисовки списка чатов.
+            - 🎙️ **Надежность звука и WebRTC**: Добавлены запасные STUN-серверы и автоматический перезапуск аудиопотока при подключении.
+            - 🌐 **Стабильность подключения к Railway**: Автоматическое подключение и дружелюбная обработка сетевых ошибок.
+          files: PRITONN_v5.8.7.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

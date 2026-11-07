@@ -72,6 +72,8 @@ export const App: React.FC = () => {
   activeChatRef.current = activeChat;
   const allUsersRef = useRef<User[]>(allUsers);
   allUsersRef.current = allUsers;
+  const chatsRef = useRef<Chat[]>(chats);
+  chatsRef.current = chats;
 
   // Apply dark or light theme
   useEffect(() => {
@@ -93,7 +95,23 @@ export const App: React.FC = () => {
       }
     });
 
-    socket.on('new_message', (msg: Message) => {
+    socket.on('new_message', (msg: Message & { members?: string[] }) => {
+      const myId = currentUserRef.current?.id;
+      if (!myId) return;
+
+      // STRICT PRIVACY CHECK: Is current user a participant of this conversation?
+      const currentChats = chatsRef.current || [];
+      const targetChat = currentChats.find((c) => c.id === msg.chatId);
+      const isRecipient =
+        (Array.isArray(msg.members) && msg.members.includes(myId)) ||
+        (targetChat && (targetChat.members?.includes(myId) || targetChat.type === 'channel' || targetChat.type === 'bot')) ||
+        msg.senderId === myId;
+
+      if (!isRecipient) {
+        // Message is between other people: do not play sound, do not modify state
+        return;
+      }
+
       // Check if message belongs to active chat
       setActiveChat((currentActive) => {
         if (currentActive && currentActive.id === msg.chatId) {
@@ -132,9 +150,9 @@ export const App: React.FC = () => {
         });
       });
 
-      if (msg.senderId === currentUserRef.current?.id) {
+      if (msg.senderId === myId) {
         soundEffects.playSent();
-      } else {
+      } else if (!msg.isSilent) {
         soundEffects.playReceive();
       }
     });
@@ -1128,6 +1146,7 @@ export const App: React.FC = () => {
           chat={callChat || activeChat}
           targetUser={callTargetUser || (activeChat?.type === 'direct' ? activeChat.targetUser : null)}
           currentUser={currentUser}
+          allUsers={allUsers}
           socket={socketRef.current}
           isIncomingAccepted={isIncomingAccepted}
           onClose={() => {

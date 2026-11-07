@@ -884,12 +884,23 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
     diceValue,
     burnTimer: req.body.burnTimer ? Number(req.body.burnTimer) : null,
     inlineKeyboard: req.body.inlineKeyboard || null,
+    members: Array.isArray(chat.members) ? chat.members : [],
   };
 
   db.messages.push(newMessage);
   saveData(db);
 
-  io.emit('new_message', newMessage);
+  // Send message strictly to members of this chat
+  if (Array.isArray(chat.members) && chat.members.length > 0) {
+    chat.members.forEach(memberId => {
+      const sockets = userSockets.get(memberId);
+      if (sockets) {
+        sockets.forEach(sId => io.to(sId).emit('new_message', newMessage));
+      }
+    });
+  } else {
+    io.emit('new_message', newMessage);
+  }
 
   // If chat is with the AI bot
   if (chat.type === 'bot' || chat.id.startsWith('chat_bot') || chat.targetUserId === 'user_bot') {
@@ -901,13 +912,23 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
         senderId: 'user_bot',
         text: botReply.text,
         inlineKeyboard: botReply.inlineKeyboard || null,
+        members: Array.isArray(chat.members) ? chat.members : [],
         timestamp: Date.now(),
         status: 'read',
         reactions: {}
       };
       db.messages.push(botMessage);
       saveData(db);
-      io.emit('new_message', botMessage);
+      if (Array.isArray(chat.members) && chat.members.length > 0) {
+        chat.members.forEach(memberId => {
+          const sockets = userSockets.get(memberId);
+          if (sockets) {
+            sockets.forEach(sId => io.to(sId).emit('new_message', botMessage));
+          }
+        });
+      } else {
+        io.emit('new_message', botMessage);
+      }
     }, 600);
   }
 
@@ -1440,13 +1461,24 @@ io.on('connection', (socket) => {
       },
       text: '',
       timestamp: Date.now(),
-      status: 'read'
+      status: 'read',
+      members: Array.isArray(directChat.members) ? directChat.members : [callerId, receiverId]
     };
 
     db.messages = db.messages || [];
     db.messages.push(callMsg);
     saveData(db);
-    io.emit('new_message', callMsg);
+
+    if (Array.isArray(directChat.members)) {
+      directChat.members.forEach(memberId => {
+        const sockets = userSockets.get(memberId);
+        if (sockets) {
+          sockets.forEach(sId => io.to(sId).emit('new_message', callMsg));
+        }
+      });
+    } else {
+      io.emit('new_message', callMsg);
+    }
     return callMsg;
   }
 

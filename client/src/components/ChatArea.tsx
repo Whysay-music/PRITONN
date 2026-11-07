@@ -175,7 +175,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [revealedSpoilers, setRevealedSpoilers] = useState<{ [msgId: string]: boolean }>({});
 
   // Sync draft text on chat change
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+    }
     if (chat?.draft) {
       setInputText(chat.draft);
     } else {
@@ -188,7 +193,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const handleInputChange = (val: string) => {
     setInputText(val);
     if (chat && onSaveDraft) {
-      onSaveDraft(chat.id, val);
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = setTimeout(() => {
+        onSaveDraft(chat.id, val);
+      }, 600);
     }
   };
 
@@ -322,6 +330,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     });
 
     setInputText('');
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+    }
     if (chat && onSaveDraft) {
       onSaveDraft(chat.id, '');
     }
@@ -1233,9 +1244,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   {isOutgoing && (
                     <span>
                       {msg.status === 'read' ? (
-                        <CheckCheck size={13} className="text-[#3390ec] dark:text-blue-300 animate-check-pop" />
+                        <CheckCheck size={13} className="text-[#3390ec] dark:text-blue-300" />
                       ) : (
-                        <Check size={13} className="animate-check-pop" />
+                        <Check size={13} />
                       )}
                     </span>
                   )}

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Plus } from 'lucide-react';
 import { Story, User } from '../types';
-import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import { getAvatarUrl, handleAvatarError, resolveMediaUrl } from '../utils/avatar';
 
 interface StoriesBarProps {
   stories: Story[];
@@ -87,13 +87,23 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
               <div className="w-13 h-13 rounded-full p-0.5 bg-gradient-to-tr from-purple-500 via-rose-500 to-amber-500 shadow group-hover:shadow-[0_0_12px_rgba(244,63,94,0.45)] group-hover:scale-105 transition-all">
                 <div className="w-full h-full rounded-full p-0.5 bg-[var(--tg-sidebar)]">
                   <img
-                    src={getAvatarUrl(authorAvatar, authorName)}
+                    src={latestStory.mediaType === 'image' && latestStory.mediaUrl ? resolveMediaUrl(latestStory.mediaUrl) : getAvatarUrl(authorAvatar, authorName)}
                     onError={(e) => handleAvatarError(e, authorName)}
                     alt={authorName}
                     className="w-full h-full rounded-full object-cover"
                   />
                 </div>
               </div>
+              {latestStory.mediaType === 'image' && latestStory.mediaUrl && (
+                <div className="absolute -bottom-0.5 -right-0.5 w-4.5 h-4.5 rounded-full ring-2 ring-[var(--tg-sidebar)] overflow-hidden shadow">
+                  <img
+                    src={getAvatarUrl(authorAvatar, authorName)}
+                    onError={(e) => handleAvatarError(e, authorName)}
+                    alt={authorName}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
               {count > 1 && (
                 <span className="absolute -top-1 -right-1 px-1 bg-[var(--tg-accent)] text-white text-[9px] font-bold rounded-full border border-[var(--tg-sidebar)] shadow">
                   {count}

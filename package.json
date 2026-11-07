@@ -1,6 +1,6 @@
 {
   "name": "pritonn-messenger",
-  "version": "5.17.0",
+  "version": "5.18.0",
   "description": "PRITONN — бесплатная социальная сеть и мессенджер с видеозвонками",
   "main": "server/server.js",
   "scripts": {

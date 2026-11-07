@@ -93,6 +93,8 @@ export interface Chat {
     color?: string;
     createdAt: number;
   }>;
+  isTyping?: boolean;
+  typingUser?: string;
   liveStream?: {
     isLive: boolean;
     hostId: string;

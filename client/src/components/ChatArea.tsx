@@ -1686,10 +1686,21 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   title="Двойной клик — поставить сердечко ❤️"
                   className={`max-w-[85%] md:max-w-[70%] lg:max-w-[60%] rounded-2xl p-2.5 shadow-sm relative transition-all cursor-default select-text ${
                     isOutgoing
-                      ? 'bg-[var(--tg-bubble-out)] text-[var(--tg-bubble-out-text)] rounded-br-none shadow-[0_1px_2px_rgba(0,0,0,0.1)]'
-                      : 'bg-[var(--tg-bubble-in)] text-[var(--tg-bubble-in-text)] rounded-bl-none shadow-[0_1px_2px_rgba(0,0,0,0.1)]'
+                      ? 'bg-[var(--tg-bubble-out)] text-[var(--tg-bubble-out-text)] rounded-br-none shadow-[0_1px_2px_rgba(0,0,0,0.1)] border border-white/5'
+                      : 'bg-[var(--tg-bubble-in)] text-[var(--tg-bubble-in-text)] rounded-bl-none shadow-[0_1px_2px_rgba(0,0,0,0.1)] border border-white/5'
                   }`}
                 >
+                  {/* Subtle Telegram bubble tail */}
+                  {isOutgoing ? (
+                    <svg viewBox="0 0 11 14" className="absolute -bottom-[1px] -right-[6px] w-[8px] h-[12px] text-[var(--tg-bubble-out)] pointer-events-none drop-shadow-sm">
+                      <path d="M0 0 C4 2 9 8 10 14 C7 14 3 14 0 14 Z" fill="currentColor" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 11 14" className="absolute -bottom-[1px] -left-[6px] w-[8px] h-[12px] text-[var(--tg-bubble-in)] pointer-events-none drop-shadow-sm -scale-x-100">
+                      <path d="M0 0 C4 2 9 8 10 14 C7 14 3 14 0 14 Z" fill="currentColor" />
+                    </svg>
+                  )}
+
                   {/* Group sender name */}
                   {chat.type === 'group' && !isOutgoing && (
                     <div
@@ -2325,7 +2336,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           )}
         </div>
       ) : (
-        <div className="p-2.5 sm:p-3 bg-[var(--tg-sidebar)] border-t border-[var(--tg-border)] flex items-end gap-2 z-20 relative">
+        <div className="px-2.5 sm:px-4 pb-2.5 sm:pb-3.5 pt-1.5 bg-gradient-to-t from-[var(--tg-bg)] via-[var(--tg-bg)]/80 to-transparent flex items-end gap-2 z-20 relative">
           {isUploadingMedia && (
             <div className="absolute -top-9 left-1/2 -translate-x-1/2 bg-[#17212b]/95 border border-[#5288c1]/50 text-white text-xs px-3.5 py-1.5 rounded-full shadow-xl flex items-center gap-2 z-40 animate-pop-in">
               <Loader2 size={14} className="animate-spin text-[#5288c1]" />
@@ -2606,7 +2617,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <Paperclip size={20} />
               </button>
 
-              <div className="flex-1 bg-[var(--tg-surface)] rounded-2xl border border-transparent focus-within:border-blue-500 transition flex items-end px-3 py-1.5 min-h-[42px] max-h-36">
+              <div className="flex-1 tg-floating-input-bar rounded-2xl border border-[var(--tg-card-border)] focus-within:border-[var(--tg-border-accent)] transition-all flex items-end px-3 py-1.5 min-h-[44px] max-h-36 shadow-lg">
                 <textarea
                   ref={textareaRef}
                   rows={1}

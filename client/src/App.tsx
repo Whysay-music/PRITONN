@@ -9,6 +9,8 @@ import { StoryViewerModal } from './components/StoryViewerModal';
 import { PritonnTapGameModal } from './components/PritonnTapGameModal';
 import { StickerMakerModal } from './components/StickerMakerModal';
 import { EmojiStatusPickerModal } from './components/EmojiStatusPickerModal';
+import { FloatingCallPill } from './components/FloatingCallPill';
+import { MobileBottomNav } from './components/MobileBottomNav';
 import { CreateStoryModal } from './components/CreateStoryModal';
 import { NewChatModal } from './components/NewChatModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -1565,29 +1567,25 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Top Active Call Bar across entire app when Minimized */}
+      {/* Floating Active Call Pill when Minimized */}
       {((isVoiceCallOpen && isVoiceCallMinimized) || (isGroupVoiceChatOpen && isGroupCallMinimized)) && (
-        <div
-          onClick={() => {
+        <FloatingCallPill
+          isVoiceCall={isVoiceCallOpen}
+          isGroupCall={isGroupVoiceChatOpen}
+          callChat={callChat}
+          callTargetUser={callTargetUser}
+          groupCallChat={groupCallChat}
+          onMaximize={() => {
             if (isVoiceCallOpen) setIsVoiceCallMinimized(false);
             if (isGroupVoiceChatOpen) setIsGroupCallMinimized(false);
           }}
-          className="bg-gradient-to-r from-emerald-600 via-teal-600 to-[#2481cc] text-white px-4 py-2 text-xs flex items-center justify-between shadow-md z-40 cursor-pointer select-none animate-fade-in hover:brightness-105 transition"
-        >
-          <div className="flex items-center gap-2.5 truncate">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-300 animate-ping flex-shrink-0" />
-            <span className="font-bold truncate">
-              {isVoiceCallOpen
-                ? `📞 Звонок: ${callTargetUser?.name || callChat?.displayName || callChat?.name || 'Собеседник'}`
-                : `🎙 Голосовой чат: ${groupCallChat?.displayName || groupCallChat?.name || 'Группа'}`}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-xl text-xs font-bold transition">
-              Развернуть звонок
-            </span>
-          </div>
-        </div>
+          onEndCall={() => {
+            setIsVoiceCallOpen(false);
+            setIsVoiceCallMinimized(false);
+            setIsGroupVoiceChatOpen(false);
+            setIsGroupCallMinimized(false);
+          }}
+        />
       )}
 
       {/* Global Music Player (Header Bar) */}
@@ -1980,7 +1978,21 @@ export const App: React.FC = () => {
       )}
 
       {/* Telegram Desktop Main Drawer Menu */}
-      <TelegramDrawerMenu
+      
+      {/* Mobile Bottom Navigation Bar */}
+      {!activeChat && (
+        <MobileBottomNav
+          activeTab="chats"
+          unreadCount={chats.reduce((acc, c) => acc + (c.unreadCount || 0), 0)}
+          onSelectTab={(tab) => {
+            if (tab === 'menu') setIsMainMenuOpen(true);
+            if (tab === 'calls') setIsCallHistoryOpen(true);
+            if (tab === 'stories') setIsCreateStoryOpen(true);
+          }}
+          currentUser={currentUser}
+        />
+      )}
+<TelegramDrawerMenu
         isOpen={isMainMenuOpen}
         currentUser={currentUser}
         isDark={isDark}

@@ -14,6 +14,7 @@ export const TelegramRoundVideoPlayer: React.FC<TelegramRoundVideoPlayerProps> =
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [is2x, setIs2x] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [totalDuration, setTotalDuration] = useState(duration);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -73,6 +74,15 @@ export const TelegramRoundVideoPlayer: React.FC<TelegramRoundVideoPlayerProps> =
     }
   };
 
+  const toggleSpeed = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (videoRef.current) {
+      const next = !is2x;
+      videoRef.current.playbackRate = next ? 2 : 1;
+      setIs2x(next);
+    }
+  };
+
   const toggleMute = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (videoRef.current) {
@@ -89,7 +99,7 @@ export const TelegramRoundVideoPlayer: React.FC<TelegramRoundVideoPlayerProps> =
 
   return (
     <div
-      onClick={togglePlay}
+      onClick={togglePlay} onDoubleClick={toggleSpeed}
       className="relative w-52 h-52 sm:w-56 sm:h-56 rounded-full cursor-pointer group select-none overflow-hidden shadow-xl border-2 border-[#5288c1]/40 bg-black"
       title={isPlaying ? 'Пауза' : 'Смотреть видеокружок'}
     >
@@ -141,6 +151,18 @@ export const TelegramRoundVideoPlayer: React.FC<TelegramRoundVideoPlayerProps> =
       </div>
 
       {/* Volume button at bottom */}
+      {/* 2X Speed Toggle Button */}
+      <button
+        type="button"
+        onClick={toggleSpeed}
+        className={`absolute bottom-2.5 left-10 z-20 px-2 py-1 rounded-full text-[10px] font-bold transition backdrop-blur-sm cursor-pointer ${
+          is2x ? 'bg-amber-500 text-white shadow-md' : 'bg-black/65 hover:bg-black/85 text-white/90'
+        }`}
+        title="Переключить скорость 1x / 2x"
+      >
+        {is2x ? '2X' : '1X'}
+      </button>
+
       <button
         type="button"
         onClick={toggleMute}

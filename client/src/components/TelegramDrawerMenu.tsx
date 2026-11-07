@@ -191,6 +191,33 @@ export const TelegramDrawerMenu: React.FC<TelegramDrawerMenuProps> = ({
             {currentUser.phone && (
               <p className="text-[11px] text-white/70 mt-0.5">{currentUser.phone}</p>
             )}
+            {/* Interactive Stats & Quick Action Chips */}
+            <div className="flex items-center gap-2 mt-2.5 pt-2 border-t border-white/15">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  if (onOpenTapGame) onOpenTapGame();
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/25 hover:bg-amber-500/35 border border-amber-400/40 text-amber-200 text-xs font-bold transition shadow-sm cursor-pointer group"
+                title="Баланс PRITONN Coins — нажать для игры"
+              >
+                <span className="text-sm group-hover:rotate-12 transition-transform">🪙</span>
+                <span>{(currentUser.pritonnCoins || 0).toLocaleString()}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  if (onOpenEmojiStatus) onOpenEmojiStatus();
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-medium transition shadow-sm cursor-pointer"
+                title="Сменить эмодзи-статус"
+              >
+                <span>{currentUser.emojiStatus || '✨'}</span>
+                <span className="text-[11px] text-white/90">Статус</span>
+              </button>
+            </div>
           </div>
 
           {/* Quick Theme Swatches Strip (if open) */}

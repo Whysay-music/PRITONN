@@ -104,6 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const activeTab = propActiveTab || localTab;
   const setActiveTab = onSelectTab || setLocalTab;
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchFilter, setSearchFilter] = useState<'all' | 'media' | 'files' | 'voice' | 'links'>('all');
   const [showArchive, setShowArchive] = useState(false);
   const [localMenuOpen, setLocalMenuOpen] = useState(false);
   const isMenuOpen = propIsMenuOpen !== undefined ? propIsMenuOpen : localMenuOpen;
@@ -392,6 +393,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         )}
       </div>
+
+      
+      {/* Quick Search Media / Type Filter Chips */}
+      {searchQuery && (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 overflow-x-auto no-scrollbar border-b border-[var(--tg-border)] text-[11px] text-[var(--tg-text-muted)] animate-fade-in">
+          {[
+            { id: 'all', label: 'Все' },
+            { id: 'media', label: '📷 Медиа' },
+            { id: 'files', label: '📄 Файлы' },
+            { id: 'voice', label: '🎙️ Голосовые' },
+            { id: 'links', label: '🔗 Ссылки' },
+          ].map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => setSearchFilter(chip.id as any)}
+              className={`px-2.5 py-1 rounded-full whitespace-nowrap transition cursor-pointer ${
+                searchFilter === chip.id
+                  ? 'bg-[var(--tg-accent)] text-white font-semibold shadow-sm'
+                  : 'bg-[var(--tg-surface)] hover:bg-[var(--tg-surface-hover)] text-[var(--tg-text)]'
+              }`}
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Stories Bar */}
       {!showArchive && (
@@ -741,7 +769,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                   <div className="flex items-center justify-between gap-1 text-xs">
                     {/* Draft Indicator (strictly local to currentUser) vs Last message */}
-                    {localDraft && !isActive ? (
+                    {chat.isTyping ? (
+                      <p className="truncate flex-1 text-[13px] text-emerald-400 font-medium flex items-center gap-1.5 animate-pulse">
+                        <span className="flex items-center gap-0.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                        </span>
+                        <span>печатает...</span>
+                      </p>
+                    ) : localDraft && !isActive ? (
                       <p className="truncate flex-1 text-[13px]">
                         <span className="text-rose-400 font-semibold mr-1">Черновик:</span>
                         <span className="text-[var(--tg-text-muted)] opacity-90">{localDraft}</span>

@@ -50,24 +50,26 @@ jobs:
 
       - name: Rename APK
         run: |
-          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.8.3.apk
+          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.8.4.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: PRITONN-Android-APK
-          path: PRITONN_v5.8.3.apk
+          path: PRITONN_v5.8.4.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/heads/main')
         with:
-          tag_name: v5.8.3
-          name: PRITONN v5.8.3 (Android & Windows)
+          tag_name: v5.8.4
+          name: PRITONN v5.8.4 (Android & Windows)
           body: |
-            ## 🟣 PRITONN Messenger & Social Platform v5.8.3
+            ## 🟣 PRITONN Messenger & Social Platform v5.8.4
             
-            - 📱 **PRITONN_v5.8.3.apk**: Установщик для Android (смартфоны и планшеты).
-          files: PRITONN_v5.8.3.apk
+            - 📱 **PRITONN_v5.8.4.apk**: Исправлена ошибка подключения на телефонах (`<!doctype `).
+            - 🌐 Добавлен встроенный переключатель серверов в приложении.
+            - ⚡ Автоматическое подключение к облачному серверу Cloudflare / Render.
+          files: PRITONN_v5.8.4.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

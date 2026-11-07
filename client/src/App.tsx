@@ -110,7 +110,7 @@ export const App: React.FC = () => {
         const chatExists = prevChats.some((c) => c.id === msg.chatId);
         if (!chatExists && currentUserRef.current) {
           // If a new direct message or group message arrived, refresh user chats
-          fetch(`http://localhost:4000/api/chats?userId=${currentUserRef.current.id}`)
+          fetch(`${API_BASE_URL}/api/chats?userId=${currentUserRef.current.id}`)
             .then((r) => r.json())
             .then((newChats) => setChats(newChats))
             .catch(() => {});
@@ -344,10 +344,10 @@ export const App: React.FC = () => {
   const loadUserData = async (userId: string) => {
     try {
       const [userRes, allUsersRes, chatsRes, storiesRes] = await Promise.all([
-        fetch(`http://localhost:4000/api/me?userId=${userId}`),
-        fetch('http://localhost:4000/api/users'),
-        fetch(`http://localhost:4000/api/chats?userId=${userId}`),
-        fetch('http://localhost:4000/api/stories'),
+        fetch(`${API_BASE_URL}/api/me?userId=${userId}`),
+        fetch(`${API_BASE_URL}/api/users`),
+        fetch(`${API_BASE_URL}/api/chats?userId=${userId}`),
+        fetch(`${API_BASE_URL}/api/stories`),
       ]);
 
       if (!userRes.ok) {
@@ -382,7 +382,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const savedUserId = localStorage.getItem('tg_user_id');
-    fetch('http://localhost:4000/api/users')
+    fetch(`${API_BASE_URL}/api/users`)
       .then((res) => res.json())
       .then((users) => {
         setAllUsers(users);
@@ -423,7 +423,7 @@ export const App: React.FC = () => {
     if (!uid) return;
 
     try {
-      const res = await fetch(`http://localhost:4000/api/chats/${chat.id}/messages?userId=${uid}`);
+      const res = await fetch(`${API_BASE_URL}/api/chats/${chat.id}/messages?userId=${uid}`);
       if (!res.ok) {
         setMessages([]);
         return;
@@ -443,7 +443,7 @@ export const App: React.FC = () => {
   const handleStartDirectChat = async (targetUser: User) => {
     if (!currentUser) return;
     try {
-      const res = await fetch('http://localhost:4000/api/chats/direct', {
+      const res = await fetch(`${API_BASE_URL}/api/chats/direct`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -467,7 +467,7 @@ export const App: React.FC = () => {
         (c) => c.type === 'direct' && c.members?.includes(targetUser.id)
       );
       if (!directChat) {
-        const res = await fetch('http://localhost:4000/api/chats/direct', {
+        const res = await fetch(`${API_BASE_URL}/api/chats/direct`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -496,7 +496,7 @@ export const App: React.FC = () => {
   const handleOpenSavedMessages = async () => {
     if (!currentUser) return;
     try {
-      const res = await fetch('http://localhost:4000/api/chats/saved', {
+      const res = await fetch(`${API_BASE_URL}/api/chats/saved`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentUserId: currentUser.id }),
@@ -528,7 +528,7 @@ export const App: React.FC = () => {
     if (!activeChat || !currentUser) return;
 
     try {
-      await fetch(`http://localhost:4000/api/chats/${activeChat.id}/messages`, {
+      await fetch(`${API_BASE_URL}/api/chats/${activeChat.id}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -544,7 +544,7 @@ export const App: React.FC = () => {
   // Edit message
   const handleEditMessage = async (messageId: string, newText: string) => {
     try {
-      await fetch(`http://localhost:4000/api/messages/${messageId}`, {
+      await fetch(`${API_BASE_URL}/api/messages/${messageId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: newText }),
@@ -560,7 +560,7 @@ export const App: React.FC = () => {
     const msg = messages.find((m) => m.poll && m.poll.id === pollId);
     if (!msg) return;
     try {
-      await fetch(`http://localhost:4000/api/messages/${msg.id}/vote`, {
+      await fetch(`${API_BASE_URL}/api/messages/${msg.id}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ optionId, userId: currentUser.id }),
@@ -575,7 +575,7 @@ export const App: React.FC = () => {
     if (!currentUser) return;
     const sender = allUsers.find((u) => u.id === message.senderId);
     try {
-      await fetch(`http://localhost:4000/api/chats/${targetChatId}/messages`, {
+      await fetch(`${API_BASE_URL}/api/chats/${targetChatId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -604,7 +604,7 @@ export const App: React.FC = () => {
   const handleReactMessage = async (messageId: string, emoji: string) => {
     if (!currentUser) return;
     try {
-      await fetch(`http://localhost:4000/api/messages/${messageId}/react`, {
+      await fetch(`${API_BASE_URL}/api/messages/${messageId}/react`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -620,7 +620,7 @@ export const App: React.FC = () => {
   // Pin message
   const handlePinMessage = async (messageId: string) => {
     try {
-      await fetch(`http://localhost:4000/api/messages/${messageId}/pin`, {
+      await fetch(`${API_BASE_URL}/api/messages/${messageId}/pin`, {
         method: 'POST',
       });
     } catch (err) {
@@ -633,7 +633,7 @@ export const App: React.FC = () => {
     if (!currentUser) return;
     try {
       await fetch(
-        `http://localhost:4000/api/messages/${messageId}?forEveryone=${forEveryone}&userId=${currentUser.id}`,
+        `${API_BASE_URL}/api/messages/${messageId}?forEveryone=${forEveryone}&userId=${currentUser.id}`,
         { method: 'DELETE' }
       );
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
@@ -646,7 +646,7 @@ export const App: React.FC = () => {
   const handleSaveChat = async (chatId: string, updated: { name: string; description: string; avatar: string }) => {
     if (!currentUser) return;
     try {
-      const res = await fetch(`http://localhost:4000/api/chats/${chatId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/chats/${chatId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -677,7 +677,7 @@ export const App: React.FC = () => {
     if (!currentUser) return;
     try {
       await fetch(
-        `http://localhost:4000/api/chats/${chatId}?forEveryone=${forEveryone}&userId=${currentUser.id}`,
+        `${API_BASE_URL}/api/chats/${chatId}?forEveryone=${forEveryone}&userId=${currentUser.id}`,
         { method: 'DELETE' }
       );
       setChats((prev) => prev.filter((c) => c.id !== chatId));
@@ -700,7 +700,7 @@ export const App: React.FC = () => {
     const endpoint = isBlocked ? 'unblock' : 'block';
 
     try {
-      const res = await fetch(`http://localhost:4000/api/users/${targetUserId}/${endpoint}`, {
+      const res = await fetch(`${API_BASE_URL}/api/users/${targetUserId}/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentUserId: currentUser.id }),
@@ -726,7 +726,7 @@ export const App: React.FC = () => {
   }) => {
     if (!currentUser) return;
     try {
-      const res = await fetch('http://localhost:4000/api/chats', {
+      const res = await fetch(`${API_BASE_URL}/api/chats`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -745,7 +745,7 @@ export const App: React.FC = () => {
   const handleInviteMembers = async (chatId: string, userIds: string[]) => {
     if (!currentUser) return;
     try {
-      const res = await fetch(`http://localhost:4000/api/chats/${chatId}/invite`, {
+      const res = await fetch(`${API_BASE_URL}/api/chats/${chatId}/invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -767,7 +767,7 @@ export const App: React.FC = () => {
   const handleCreateStory = async (mediaUrl: string, caption: string) => {
     if (!currentUser) return;
     try {
-      await fetch('http://localhost:4000/api/stories', {
+      await fetch(`${API_BASE_URL}/api/stories`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -785,7 +785,7 @@ export const App: React.FC = () => {
   const handleUpdateProfile = async (updated: Partial<User>) => {
     if (!currentUser) return;
     try {
-      const res = await fetch('http://localhost:4000/api/me', {
+      const res = await fetch(`${API_BASE_URL}/api/me`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -803,7 +803,7 @@ export const App: React.FC = () => {
   // Toggle Pin chat
   const handleTogglePinChat = async (chat: Chat) => {
     try {
-      const res = await fetch(`http://localhost:4000/api/chats/${chat.id}/pin`, { method: 'PUT' });
+      const res = await fetch(`${API_BASE_URL}/api/chats/${chat.id}/pin`, { method: 'PUT' });
       const updated = await res.json();
       setChats((prev) =>
         prev.map((c) => (c.id === chat.id ? { ...c, isPinned: updated.isPinned } : c))
@@ -819,7 +819,7 @@ export const App: React.FC = () => {
   // Toggle Archive chat
   const handleToggleArchiveChat = async (chat: Chat) => {
     try {
-      const res = await fetch(`http://localhost:4000/api/chats/${chat.id}/archive`, { method: 'PUT' });
+      const res = await fetch(`${API_BASE_URL}/api/chats/${chat.id}/archive`, { method: 'PUT' });
       const updated = await res.json();
       setChats((prev) =>
         prev.map((c) => (c.id === chat.id ? { ...c, isArchived: updated.isArchived } : c))
@@ -836,7 +836,7 @@ export const App: React.FC = () => {
   const handleSaveDraft = async (chatId: string, draft: string) => {
     try {
       setChats((prev) => prev.map((c) => (c.id === chatId ? { ...c, draft } : c)));
-      await fetch(`http://localhost:4000/api/chats/${chatId}/draft`, {
+      await fetch(`${API_BASE_URL}/api/chats/${chatId}/draft`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ draft }),
@@ -849,7 +849,7 @@ export const App: React.FC = () => {
   // Burn message
   const handleBurnMessage = async (messageId: string) => {
     try {
-      await fetch(`http://localhost:4000/api/messages/${messageId}/burn`, { method: 'POST' });
+      await fetch(`${API_BASE_URL}/api/messages/${messageId}/burn`, { method: 'POST' });
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
     } catch (err) {
       console.error('Error burning message:', err);
@@ -859,7 +859,7 @@ export const App: React.FC = () => {
   // Transcribe voice message to text
   const handleTranscribeVoice = async (messageId: string) => {
     try {
-      const res = await fetch(`http://localhost:4000/api/messages/${messageId}/transcribe`, { method: 'POST' });
+      const res = await fetch(`${API_BASE_URL}/api/messages/${messageId}/transcribe`, { method: 'POST' });
       const data = await res.json();
       setMessages((prev) =>
         prev.map((m) => (m.id === messageId ? { ...m, transcribedText: data.transcribedText } : m))
@@ -873,7 +873,7 @@ export const App: React.FC = () => {
   const handleCreateFolder = async (name: string, icon: string, chatIds: string[]) => {
     if (!currentUser) return;
     try {
-      const res = await fetch(`http://localhost:4000/api/users/${currentUser.id}/folders`, {
+      const res = await fetch(`${API_BASE_URL}/api/users/${currentUser.id}/folders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, icon, chatIds }),
@@ -892,7 +892,7 @@ export const App: React.FC = () => {
   const handleDeleteFolder = async (folderId: string) => {
     if (!currentUser) return;
     try {
-      await fetch(`http://localhost:4000/api/users/${currentUser.id}/folders/${folderId}`, {
+      await fetch(`${API_BASE_URL}/api/users/${currentUser.id}/folders/${folderId}`, {
         method: 'DELETE',
       });
       const updatedFolders = (currentUser.customFolders || []).filter((f) => f.id !== folderId);

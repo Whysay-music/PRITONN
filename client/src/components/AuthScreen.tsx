@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
-import { Send, UserPlus, LogIn, Camera, Eye, EyeOff, Upload, Check } from 'lucide-react';
+import { Send, UserPlus, LogIn, Camera, Eye, EyeOff, Upload, Check, Globe } from 'lucide-react';
 import { User } from '../types';
-import { API_BASE_URL } from '../config';
+import { getApiUrl, setCustomServerUrl, DEFAULT_ONLINE_SERVER } from '../config';
 
 interface AuthScreenProps {
   onLoginSuccess: (user: User) => void;
@@ -38,6 +38,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [showServerModal, setShowServerModal] = useState(false);
+  const [currentServerInput, setCurrentServerInput] = useState(getApiUrl());
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -60,7 +62,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch(`${API_BASE_URL}/api/upload`, {
+      const targetUrl = getApiUrl();
+      const res = await fetch(`${targetUrl}/api/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -69,8 +72,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         throw new Error('Не удалось загрузить изображение');
       }
 
-      const data = await res.json();
-      setAvatarUrl(data.url);
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Not JSON
+      }
+      if (data?.url) {
+        setAvatarUrl(data.url);
+      }
     } catch {
       // Fallback: use data URI preview directly so avatar is never lost
       if (typeof reader.result === 'string') {
@@ -105,8 +115,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     setIsLoading(true);
 
     try {
+      const targetUrl = getApiUrl();
       const finalAvatar = avatarUrl || avatarPreview || undefined;
-      const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
+      const res = await fetch(`${targetUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -119,9 +130,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         }),
       });
 
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Not JSON response
+      }
+
       if (!res.ok) {
-        throw new Error(data.error || 'Ошибка при регистрации');
+        throw new Error(data?.error || `Сервер недоступен (${res.status}). Проверьте адрес подключения`);
+      }
+      if (!data) {
+        throw new Error('Сервер вернул некорректный ответ. Проверьте адрес сервера');
       }
 
       onLoginSuccess(data);
@@ -129,7 +149,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('Неизвестная ошибка');
+        setError('Неизвестная ошибка подключения к серверу');
       }
     } finally {
       setIsLoading(false);
@@ -152,7 +172,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      const targetUrl = getApiUrl();
+      const res = await fetch(`${targetUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -161,9 +182,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         }),
       });
 
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // Not JSON
+      }
+
       if (!res.ok) {
-        throw new Error(data.error || 'Неверный логин или пароль');
+        throw new Error(data?.error || `Ошибка авторизации (${res.status}). Неверный логин или пароль`);
+      }
+      if (!data) {
+        throw new Error('Сервер вернул некорректный ответ. Проверьте адрес сервера');
       }
 
       onLoginSuccess(data);
@@ -171,7 +201,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('Неизвестная ошибка');
+        setError('Неизвестная ошибка подключения к серверу');
       }
     } finally {
       setIsLoading(false);
@@ -451,8 +481,87 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               </button>
             </form>
           )}
+
+          {/* Server Connection Info & Settings */}
+          <div className="mt-4 pt-3 border-t border-[#242f3d]/60 flex items-center justify-between text-xs text-[#7f91a4]">
+            <div className="flex items-center gap-1.5 truncate max-w-[210px]">
+              <Globe size={13} className="text-blue-400 shrink-0" />
+              <span className="truncate" title={getApiUrl()}>
+                {getApiUrl().replace(/^https?:\/\//, '')}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentServerInput(getApiUrl());
+                setShowServerModal(true);
+              }}
+              className="text-blue-400 hover:text-blue-300 font-medium ml-2 cursor-pointer transition hover:underline"
+            >
+              Сменить сервер
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Server Config Modal */}
+      {showServerModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#17212b] border border-[#242f3d] rounded-2xl w-full max-w-sm p-5 shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-white font-semibold text-base">
+                <Globe size={18} className="text-blue-400" />
+                Сервер PRITONN
+              </div>
+              <button
+                onClick={() => setShowServerModal(false)}
+                className="text-[#7f91a4] hover:text-white text-lg font-bold w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#242f3d]"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-[#7f91a4] leading-relaxed">
+              Укажите адрес сервера (Cloudflare туннель, Render или локальный IP):
+            </p>
+
+            <input
+              type="text"
+              value={currentServerInput}
+              onChange={(e) => setCurrentServerInput(e.target.value)}
+              placeholder="https://example.trycloudflare.com"
+              className="w-full bg-[#242f3d] px-3.5 py-2.5 rounded-xl border border-transparent focus:border-blue-500 outline-none text-sm text-white placeholder-[#7f91a4]"
+            />
+
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomServerUrl(currentServerInput);
+                  setShowServerModal(false);
+                  window.location.reload();
+                }}
+                className="w-full py-2.5 bg-[#2481cc] hover:bg-[#1e70b3] text-white font-semibold text-sm rounded-xl transition cursor-pointer"
+              >
+                Сохранить и подключиться
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentServerInput(DEFAULT_ONLINE_SERVER);
+                  setCustomServerUrl(DEFAULT_ONLINE_SERVER);
+                  setShowServerModal(false);
+                  window.location.reload();
+                }}
+                className="w-full py-2 bg-[#242f3d] hover:bg-[#2c3848] text-[#7f91a4] hover:text-white text-xs rounded-xl transition cursor-pointer"
+              >
+                Сбросить на сервер по умолчанию
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

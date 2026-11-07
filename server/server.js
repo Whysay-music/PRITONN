@@ -214,54 +214,9 @@ if (db.users) {
       }
     });
   }
-  // Seed sample calls for demo history if none
-  if (!db.calls || db.calls.length === 0) {
-    const admin = db.users.find(u => u.username?.toLowerCase() === 'admin');
-    const alice = db.users.find(u => u.username === 'alice1');
-    const bob = db.users.find(u => u.username === 'bob1');
-    const charlie = db.users.find(u => u.username === 'charlie1');
-
-    if (admin && alice) {
-      db.calls = [
-        {
-          id: 'call_1',
-          callerId: alice.id,
-          receiverId: admin.id,
-          status: 'completed',
-          duration: 154, // 2 мин 34 сек
-          isVideo: false,
-          timestamp: Date.now() - 48 * 60 * 1000
-        },
-        {
-          id: 'call_2',
-          callerId: admin.id,
-          receiverId: bob ? bob.id : alice.id,
-          status: 'completed',
-          duration: 320, // 5 мин 20 сек
-          isVideo: false,
-          timestamp: Date.now() - 3 * 3600 * 1000
-        },
-        {
-          id: 'call_3',
-          callerId: charlie ? charlie.id : alice.id,
-          receiverId: admin.id,
-          status: 'missed',
-          duration: 0,
-          isVideo: false,
-          timestamp: Date.now() - 22 * 3600 * 1000
-        },
-        {
-          id: 'call_4',
-          callerId: alice.id,
-          receiverId: admin.id,
-          status: 'completed',
-          duration: 75,
-          isVideo: false,
-          timestamp: Date.now() - 44 * 3600 * 1000
-        }
-      ];
-      changed = true;
-    }
+  if (!db.calls) {
+    db.calls = [];
+    changed = true;
   }
 
   if (changed) saveData(db);
@@ -370,7 +325,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'Файл не загружен' });
   }
-  const fileUrl = `http://localhost:4000/uploads/${req.file.filename}`;
+  const fileUrl = `/uploads/${req.file.filename}`;
   res.json({
     url: fileUrl,
     filename: req.file.originalname,
@@ -1618,7 +1573,52 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Group Voice Chat Signaling (Invitations & Screen Share)
+  // Group Voice Chat Signaling (Invitations, Joining & Screen Share)
+  socket.on('voice_chat_start', ({ chatId, chatName, initiatorId, initiatorName }) => {
+    socket.join(`voice_room_${chatId}`);
+    if (chatId) {
+      const chat = db.chats.find(c => c.id === chatId);
+      if (chat) {
+        // Prevent duplicate spam messages within 60 seconds
+        const recentCallMsg = (db.messages || []).find(m => m.chatId === chatId && m.type === 'voice_chat_start' && (Date.now() - m.timestamp < 60000));
+        if (!recentCallMsg) {
+          const newMsg = {
+            id: 'msg_' + uuidv4(),
+            chatId,
+            senderId: initiatorId,
+            text: '🎙️ Голосовой звонок начался',
+            type: 'voice_chat_start',
+            timestamp: Date.now(),
+            members: chat.members
+          };
+          if (!db.messages) db.messages = [];
+          db.messages.push(newMsg);
+          chat.lastMessage = newMsg;
+          saveData(db);
+
+          // Send message to all group members so button appears in chat
+          (chat.members || []).forEach(memberId => {
+            const mSockets = userSockets.get(memberId);
+            if (mSockets) {
+              mSockets.forEach(sId => io.to(sId).emit('new_message', newMsg));
+            }
+          });
+        }
+      }
+      io.to(`voice_room_${chatId}`).emit('voice_chat_started', { chatId, initiatorId, initiatorName });
+    }
+  });
+
+  socket.on('voice_chat_join', ({ chatId, user }) => {
+    socket.join(`voice_room_${chatId}`);
+    io.to(`voice_room_${chatId}`).emit('voice_chat_user_joined', { chatId, user });
+  });
+
+  socket.on('voice_chat_leave', ({ chatId, userId }) => {
+    socket.leave(`voice_room_${chatId}`);
+    io.to(`voice_room_${chatId}`).emit('voice_chat_user_left', { chatId, userId });
+  });
+
   socket.on('voice_chat_invite', ({ chatId, chatName, inviterName, inviterId, targetUserId }) => {
     if (targetUserId) {
       const targetSockets = userSockets.get(targetUserId);

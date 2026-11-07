@@ -3,6 +3,7 @@ import { X, Heart, Send, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
 import { Story, User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { isUserVerified } from '../utils/verified';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 
 interface StoriesModalProps {
   story: Story | null;
@@ -130,8 +131,9 @@ export const StoriesModal: React.FC<StoriesModalProps> = ({
         <div className="absolute top-6 left-3 right-3 z-30 flex items-center justify-between text-white drop-shadow-md">
           <div className="flex items-center gap-2.5">
             <img
-              src={story.user.avatar}
-              alt={story.user.name}
+              src={getAvatarUrl(story?.user?.avatar, story?.user?.name)}
+              onError={(e) => handleAvatarError(e, story?.user?.name)}
+              alt={story?.user?.name || 'Пользователь'}
               className="w-9 h-9 rounded-full object-cover border border-white/40"
             />
             <div>

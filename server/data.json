@@ -6,7 +6,7 @@
       "username": "Admin",
       "password": "tixiy228",
       "phone": "+777777777777",
-      "avatar": "http://localhost:4000/uploads/1793986661494-400834245.jpg",
+      "avatar": "/uploads/1793986661494-400834245.jpg",
       "bio": "Владелец PRITONN",
       "online": false,
       "lastSeen": "был(а) только что",
@@ -16,45 +16,6 @@
       "isPremium": false,
       "emojiStatus": "⚡",
       "customFolders": []
-    },
-    {
-      "id": "user_8aebf6a6-64e6-48a3-95eb-0fb35618f32f",
-      "name": "Alice",
-      "username": "alice1",
-      "password": "password123",
-      "phone": "+79991112233",
-      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=alice1",
-      "bio": "Пользователь PRITONN",
-      "online": false,
-      "lastSeen": "был(а) сегодня в 00:54",
-      "verified": false,
-      "lastSeenTimestamp": 1794002091403
-    },
-    {
-      "id": "user_88b9ed40-bf4c-4e0e-a4d6-94249fda2f84",
-      "name": "Bob",
-      "username": "bob1",
-      "password": "password123",
-      "phone": "+79992223344",
-      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=bob1",
-      "bio": "Пользователь PRITONN",
-      "online": false,
-      "lastSeen": "был(а) сегодня в 00:29",
-      "verified": false,
-      "lastSeenTimestamp": 1794000591403
-    },
-    {
-      "id": "user_2d2fc153-6dc2-489a-b5f7-13ec0e6b7f08",
-      "name": "Charlie",
-      "username": "charlie1",
-      "password": "password123",
-      "phone": "+79993334455",
-      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=charlie1",
-      "bio": "Пользователь PRITONN",
-      "online": false,
-      "lastSeen": "был(а) вчера в 23:04",
-      "verified": false,
-      "lastSeenTimestamp": 1793995491403
     },
     {
       "id": "user_bot",
@@ -163,42 +124,6 @@
       "pinned": true,
       "unreadCount": 0,
       "isPinned": true
-    },
-    {
-      "id": "chat_saved_user_8aebf6a6-64e6-48a3-95eb-0fb35618f32f",
-      "type": "saved",
-      "name": "Избранное",
-      "avatar": "/telegram-saved.svg",
-      "members": [
-        "user_8aebf6a6-64e6-48a3-95eb-0fb35618f32f"
-      ],
-      "pinned": true,
-      "createdAt": 1794002864980,
-      "unreadCount": 0
-    },
-    {
-      "id": "chat_saved_user_88b9ed40-bf4c-4e0e-a4d6-94249fda2f84",
-      "type": "saved",
-      "name": "Избранное",
-      "avatar": "/telegram-saved.svg",
-      "members": [
-        "user_88b9ed40-bf4c-4e0e-a4d6-94249fda2f84"
-      ],
-      "pinned": true,
-      "createdAt": 1794002864981,
-      "unreadCount": 0
-    },
-    {
-      "id": "chat_saved_user_2d2fc153-6dc2-489a-b5f7-13ec0e6b7f08",
-      "type": "saved",
-      "name": "Избранное",
-      "avatar": "/telegram-saved.svg",
-      "members": [
-        "user_2d2fc153-6dc2-489a-b5f7-13ec0e6b7f08"
-      ],
-      "pinned": true,
-      "createdAt": 1794002864981,
-      "unreadCount": 0
     },
     {
       "id": "chat_saved_user_bda18047-d324-4c84-8193-186433cb2846",

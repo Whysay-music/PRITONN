@@ -1,6 +1,7 @@
 import React from 'react';
 import { Plus } from 'lucide-react';
 import { Story, User } from '../types';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 
 interface StoriesBarProps {
   stories: Story[];
@@ -24,7 +25,8 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
       >
         <div className="relative w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-cyan-500 to-blue-600 hover:scale-105 transition-transform">
           <img
-            src={currentUser.avatar}
+            src={getAvatarUrl(currentUser.avatar, currentUser.name)}
+            onError={(e) => handleAvatarError(e, currentUser.name)}
             alt="My avatar"
             className="w-full h-full object-cover rounded-full border-2 border-[var(--tg-sidebar)]"
           />
@@ -49,7 +51,8 @@ export const StoriesBar: React.FC<StoriesBarProps> = ({
           >
             <div className="w-14 h-14 rounded-full p-[2.5px] bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 hover:scale-105 transition-transform">
               <img
-                src={user.avatar}
+                src={getAvatarUrl(user.avatar, user.name)}
+                onError={(e) => handleAvatarError(e, user.name)}
                 alt={user.name}
                 className="w-full h-full object-cover rounded-full border-2 border-[var(--tg-sidebar)]"
               />

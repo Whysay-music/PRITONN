@@ -60,7 +60,11 @@ export const App: React.FC = () => {
   const [chatToEdit, setChatToEdit] = useState<Chat | null>(null);
   const [isInfoDrawerOpen, setIsInfoDrawerOpen] = useState(false);
   const [isMainMenuOpen, setIsMainMenuOpen] = useState(false);
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const saved = localStorage.getItem('pritonn_is_dark');
+    return saved !== null ? saved === 'true' : true;
+  });
   const [isMiniAppOpen, setIsMiniAppOpen] = useState(false);
   const [isFoldersModalOpen, setIsFoldersModalOpen] = useState(false);
   const [activeFullscreenEmoji, setActiveFullscreenEmoji] = useState<string | null>(null);
@@ -75,14 +79,79 @@ export const App: React.FC = () => {
   const chatsRef = useRef<Chat[]>(chats);
   chatsRef.current = chats;
 
-  // Apply dark or light theme
+  // Apply dark or light theme & update mobile status bar color
   useEffect(() => {
+    localStorage.setItem('pritonn_is_dark', String(isDark));
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
     if (isDark) {
       document.documentElement.classList.remove('light-theme');
+      document.body.classList.remove('light-theme');
+      if (metaTheme) metaTheme.setAttribute('content', '#0e1621');
     } else {
       document.documentElement.classList.add('light-theme');
+      document.body.classList.add('light-theme');
+      if (metaTheme) metaTheme.setAttribute('content', '#eef1f5');
     }
   }, [isDark]);
+
+  // Android Hardware Back Button navigation support (prevents app crashes & accidental exits)
+  useEffect(() => {
+    const handleAndroidBack = () => {
+      if (activeFullscreenEmoji) {
+        setActiveFullscreenEmoji(null);
+        return;
+      }
+      if (isMainMenuOpen) {
+        setIsMainMenuOpen(false);
+        return;
+      }
+      if (isSettingsOpen) {
+        setIsSettingsOpen(false);
+        return;
+      }
+      if (isCallHistoryOpen) {
+        setIsCallHistoryOpen(false);
+        return;
+      }
+      if (isNewChatOpen) {
+        setIsNewChatOpen(false);
+        return;
+      }
+      if (isFoldersModalOpen) {
+        setIsFoldersModalOpen(false);
+        return;
+      }
+      if (isVoiceCallOpen) {
+        setIsVoiceCallOpen(false);
+        return;
+      }
+      if (isInfoDrawerOpen) {
+        setIsInfoDrawerOpen(false);
+        return;
+      }
+      // If user is inside an active chat on mobile, take them back to the chat list!
+      if (activeChatRef.current) {
+        setActiveChat(null);
+        return;
+      }
+    };
+
+    (window as any).onAndroidBack = handleAndroidBack;
+    window.addEventListener('androidBackButton', handleAndroidBack);
+    return () => {
+      delete (window as any).onAndroidBack;
+      window.removeEventListener('androidBackButton', handleAndroidBack);
+    };
+  }, [
+    activeFullscreenEmoji,
+    isMainMenuOpen,
+    isSettingsOpen,
+    isCallHistoryOpen,
+    isNewChatOpen,
+    isFoldersModalOpen,
+    isVoiceCallOpen,
+    isInfoDrawerOpen,
+  ]);
 
   // Connect to Socket.io once and keep connection alive
   useEffect(() => {

@@ -25,6 +25,13 @@ import { Socket } from 'socket.io-client';
 import { Chat, User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { isUserVerified } from '../utils/verified';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+
+export interface GroupParticipant {
+  user: User;
+  status: 'active' | 'invited';
+  isSpeaking?: boolean;
+}
 
 interface GroupVoiceChatModalProps {
   isOpen: boolean;
@@ -74,26 +81,67 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  // Participants list (members + dynamically invited users)
-  const [roomParticipants, setRoomParticipants] = useState<User[]>([]);
+  // Participants list (starts strictly with current user; invited members show in ringing state until joined)
+  const [roomParticipants, setRoomParticipants] = useState<GroupParticipant[]>([]);
 
-  // Initialize room participants on open
+  // Initialize room participants on open (ONLY the active user who starts or joins, NO fake members)
   useEffect(() => {
     if (!isOpen || !chat || !currentUser) return;
-    const initialMembers = (chat.members || [])
-      .map((id) => allUsers.find((u) => u.id === id))
-      .filter(Boolean) as User[];
 
-    // Ensure current user is in participants
-    if (!initialMembers.some((u) => u.id === currentUser.id)) {
-      initialMembers.unshift(currentUser);
-    }
-    setRoomParticipants(initialMembers);
+    setRoomParticipants([{ user: currentUser, status: 'active', isSpeaking: !isMuted }]);
     setSeconds(0);
     setIsMinimized(false);
     setIsInviteOpen(false);
     setInvitedUserIds(new Set());
-  }, [isOpen, chat, currentUser, allUsers]);
+
+    if (socket) {
+      // 1. Notify that voice chat is active in this group
+      socket.emit('voice_chat_start', {
+        chatId: chat.id,
+        chatName: chat.displayName || chat.name || 'Голосовой чат',
+        initiatorId: currentUser.id,
+        initiatorName: currentUser.name,
+      });
+
+      // 2. Join voice chat room
+      socket.emit('voice_chat_join', {
+        chatId: chat.id,
+        user: currentUser,
+      });
+
+      // 3. Listen for other users joining
+      const handleUserJoined = (data: { chatId: string; user: User }) => {
+        if (data.chatId === chat.id && data.user.id !== currentUser.id) {
+          setRoomParticipants((prev) => {
+            const exists = prev.some((p) => p.user.id === data.user.id);
+            if (exists) {
+              return prev.map((p) => (p.user.id === data.user.id ? { ...p, status: 'active' } : p));
+            }
+            return [...prev, { user: data.user, status: 'active' }];
+          });
+        }
+      };
+
+      // 4. Listen for other users leaving
+      const handleUserLeft = (data: { chatId: string; userId: string }) => {
+        if (data.chatId === chat.id) {
+          setRoomParticipants((prev) => prev.filter((p) => p.user.id !== data.userId));
+        }
+      };
+
+      socket.on('voice_chat_user_joined', handleUserJoined);
+      socket.on('voice_chat_user_left', handleUserLeft);
+
+      return () => {
+        socket.off('voice_chat_user_joined', handleUserJoined);
+        socket.off('voice_chat_user_left', handleUserLeft);
+        socket.emit('voice_chat_leave', {
+          chatId: chat.id,
+          userId: currentUser.id,
+        });
+      };
+    }
+  }, [isOpen, chat?.id, currentUser?.id]);
 
   // Duration timer
   useEffect(() => {
@@ -165,24 +213,6 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
       }
     };
   }, [isOpen, isVideoEnabled]);
-
-  // Active speaker rotation for simulation
-  useEffect(() => {
-    if (!isOpen || roomParticipants.length <= 1) return;
-    const interval = setInterval(() => {
-      if (!isMuted) {
-        setActiveSpeakerId(currentUser?.id || null);
-      } else {
-        const others = roomParticipants.filter((u) => u.id !== currentUser?.id);
-        if (others.length > 0) {
-          const randomOther = others[Math.floor(Math.random() * others.length)];
-          setActiveSpeakerId((curr) => (curr ? null : randomOther.id));
-        }
-      }
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [isOpen, isMuted, roomParticipants, currentUser?.id]);
 
   // Toggle Mute
   const handleToggleMute = (e?: React.MouseEvent) => {
@@ -479,16 +509,16 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   const handleInviteUser = (user: User) => {
     setInvitedUserIds((prev) => new Set(prev).add(user.id));
 
-    // Immediately add to room participants
+    // Immediately add to room participants as 'invited' (blinking gray card until they join)
     setRoomParticipants((prev) => {
-      if (prev.some((u) => u.id === user.id)) return prev;
-      return [...prev, user];
+      if (prev.some((p) => p.user.id === user.id)) return prev;
+      return [...prev, { user, status: 'invited' }];
     });
 
     if (socket && chat && currentUser) {
       socket.emit('voice_chat_invite', {
         chatId: chat.id,
-        chatName: chat.displayName || chat.name,
+        chatName: chat.displayName || chat.name || 'Голосовой чат',
         inviterName: currentUser.name,
         inviterId: currentUser.id,
         targetUserId: user.id,
@@ -830,16 +860,18 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
                 {/* Floating active participants strip */}
                 <div className="absolute bottom-3 left-3 right-3 bg-black/75 backdrop-blur-md px-3 py-2 rounded-2xl border border-white/10 flex items-center justify-between overflow-x-auto no-scrollbar">
                   <div className="flex items-center gap-2">
-                    {roomParticipants.map((u) => {
+                    {roomParticipants.map((p) => {
+                      const u = p.user;
                       const isMe = u.id === currentUser.id;
-                      const isSpeaking = isMe ? !isMuted : activeSpeakerId === u.id;
+                      const isSpeaking = isMe ? !isMuted : !!p.isSpeaking;
                       return (
                         <div
                           key={u.id}
                           className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-xs"
                         >
                           <img
-                            src={u.avatar}
+                            src={getAvatarUrl(u.avatar, u.name)}
+                            onError={(e) => handleAvatarError(e, u.name)}
                             alt={u.name}
                             className={`w-5 h-5 rounded-full object-cover border ${
                               isSpeaking ? 'border-emerald-400' : 'border-transparent'
@@ -900,28 +932,37 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
               )}
 
               <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {roomParticipants.map((u) => {
+              {roomParticipants.map((p) => {
+                const u = p.user;
                 const isMe = u.id === currentUser.id;
-                const isSpeaking = isMe ? !isMuted : activeSpeakerId === u.id;
+                const isInvited = p.status === 'invited';
+                const isSpeaking = isMe ? !isMuted : !!p.isSpeaking;
 
                 return (
                   <div
                     key={u.id}
-                    className={`relative flex flex-col items-center justify-center p-4 rounded-2xl transition-all duration-200 border ${
-                      isSpeaking
-                        ? 'bg-emerald-500/10 border-emerald-500/50 shadow-lg shadow-emerald-500/10 scale-[1.02]'
-                        : 'bg-[#0e1621] border-[#242f3d] hover:border-[#324153]'
+                    className={`relative flex flex-col items-center justify-center p-4 rounded-2xl transition-all duration-300 border-2 ${
+                      isInvited
+                        ? 'border-dashed border-zinc-600 bg-zinc-900/60 opacity-60 animate-pulse'
+                        : isSpeaking
+                        ? 'bg-emerald-500/10 border-emerald-400 shadow-lg shadow-emerald-500/20 scale-[1.02]'
+                        : 'bg-[#0e1621] border-emerald-500/50 hover:border-emerald-400'
                     }`}
                   >
                     <div className="relative mb-2.5">
-                      {isSpeaking && (
+                      {isSpeaking && !isInvited && (
                         <div className="absolute -inset-2.5 rounded-full bg-emerald-500/25 animate-ping" />
                       )}
                       <img
-                        src={u.avatar}
+                        src={getAvatarUrl(u.avatar, u.name)}
+                        onError={(e) => handleAvatarError(e, u.name)}
                         alt={u.name}
-                        className={`w-16 h-16 rounded-full object-cover border-2 transition ${
-                          isSpeaking ? 'border-emerald-400 shadow-emerald-400/30' : 'border-[#242f3d]'
+                        className={`w-16 h-16 rounded-full object-cover border-2 transition-all duration-300 ${
+                          isInvited
+                            ? 'grayscale border-zinc-600'
+                            : isSpeaking
+                            ? 'border-emerald-400 shadow-emerald-400/40'
+                            : 'border-emerald-500'
                         }`}
                       />
                       {isMe && isHandRaised && (
@@ -932,18 +973,26 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1 font-semibold text-xs text-center truncate max-w-[130px]">
-                      <span className="truncate">{u.name}</span>
+                      <span className={`truncate ${isInvited ? 'text-zinc-400' : 'text-white'}`}>{u.name}</span>
                       {isMe && <span className="text-[#5288c1] font-normal">(Вы)</span>}
                       {isUserVerified(u) && <TelegramVerifiedBadge size={13} />}
                     </div>
 
                     <div className="text-[10px] mt-1 flex items-center gap-1">
-                      {isSpeaking ? (
+                      {isInvited ? (
+                        <span className="text-amber-400 font-medium animate-pulse flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                          Приглашение...
+                        </span>
+                      ) : isSpeaking ? (
                         <span className="text-emerald-400 font-medium animate-pulse flex items-center gap-1">
                           <Volume2 size={11} /> Говорит...
                         </span>
                       ) : (
-                        <span className="text-[#7f91a4]">Слушает</span>
+                        <span className="text-emerald-400 flex items-center gap-1 font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                          В сети
+                        </span>
                       )}
                     </div>
                   </div>
@@ -1003,7 +1052,7 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
                   <p className="text-center text-xs text-[#7f91a4] my-6">Контакты не найдены</p>
                 ) : (
                   filteredUsersToInvite.map((u) => {
-                    const isAlreadyInRoom = roomParticipants.some((p) => p.id === u.id);
+                    const isAlreadyInRoom = roomParticipants.some((p) => p.user.id === u.id && p.status === 'active');
                     const isInvited = invitedUserIds.has(u.id);
 
                     return (
@@ -1013,7 +1062,8 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <img
-                            src={u.avatar}
+                            src={getAvatarUrl(u.avatar, u.name)}
+                            onError={(e) => handleAvatarError(e, u.name)}
                             alt={u.name}
                             className="w-8 h-8 rounded-full object-cover flex-shrink-0"
                           />

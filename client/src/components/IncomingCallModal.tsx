@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Phone, PhoneOff, Shield } from 'lucide-react';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 
 interface IncomingCallModalProps {
   callerName: string;
@@ -19,6 +20,14 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
   onAccept,
   onDecline,
 }) => {
+  // Auto-decline if unanswered for 30s
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onDecline();
+    }, 30000);
+    return () => clearTimeout(timer);
+  }, [onDecline]);
+
   const isStoppedRef = useRef(false);
   const ringIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const ringGainRef = useRef<GainNode | null>(null);
@@ -122,7 +131,8 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
           <div className="absolute inset-0 rounded-full bg-[#5288c1]/30 animate-ping" />
           <div className="relative w-28 h-28 rounded-full overflow-hidden border-4 border-[#5288c1] shadow-2xl">
             <img
-              src={callerAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+              src={getAvatarUrl(callerAvatar, callerName)}
+              onError={(e) => handleAvatarError(e, callerName)}
               alt={callerName}
               className="w-full h-full object-cover"
             />

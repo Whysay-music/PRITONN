@@ -20,6 +20,7 @@ import {
 import { Chat, User, Message } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { isUserVerified } from '../utils/verified';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 
 interface ChatInfoDrawerProps {
   chat: Chat | null;
@@ -120,7 +121,8 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
             title="Нажмите для смены фото чата"
           >
             <img
-              src={displayAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+              src={getAvatarUrl(displayAvatar, displayName)}
+              onError={(e) => handleAvatarError(e, displayName)}
               alt={displayName}
               className="w-24 h-24 rounded-full object-cover border-2 border-blue-500 shadow-md group-hover:brightness-90 transition"
             />
@@ -342,7 +344,8 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
                   >
                     <div className="flex items-center gap-2.5">
                       <img
-                        src={u.avatar}
+                        src={getAvatarUrl(u.avatar, u.name)}
+                        onError={(e) => handleAvatarError(e, u.name)}
                         alt={u.name}
                         className="w-8 h-8 rounded-full object-cover"
                       />

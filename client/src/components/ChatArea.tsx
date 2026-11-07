@@ -58,6 +58,7 @@ import { TelegramSpoilerText } from './TelegramSpoilerText';
 import { TelegramBurnTimer } from './TelegramBurnTimer';
 import { PhotoViewerModal } from './PhotoViewerModal';
 import { VideoPlayerModal } from './VideoPlayerModal';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 import { TelegramAudioPlayer } from './TelegramAudioPlayer';
 import { VideoNoteRecorder } from './VideoNoteRecorder';
 import { TelegramRoundVideoPlayer } from './TelegramRoundVideoPlayer';
@@ -544,7 +545,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           className="flex items-center gap-3 cursor-pointer group flex-1 min-w-0"
         >
           <img
-            src={displayAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+            src={getAvatarUrl(displayAvatar, displayName)}
+            onError={(e) => handleAvatarError(e, displayName)}
             alt={displayName}
             className="w-10 h-10 rounded-full object-cover border border-transparent group-hover:border-blue-400 transition"
           />
@@ -831,6 +833,35 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             const authorColor = getAuthorColor(senderName);
             const isPinned = chat.pinnedMessageId === msg.id;
             const isSenderVerified = isOutgoing ? isUserVerified(currentUser) : isUserVerified(sender);
+
+            {/* Special Group Voice Chat Announcement Message */}
+            if (msg.type === 'voice_chat_start') {
+              return (
+                <div key={msg.id} className="flex justify-center my-3 select-none animate-pop-in">
+                  <div className="bg-[#17212b]/95 border border-emerald-500/40 backdrop-blur-md rounded-2xl p-3 px-4 shadow-xl flex items-center gap-3.5 max-w-sm">
+                    <div className="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0 animate-pulse">
+                      <Radio size={20} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white leading-tight">
+                        🎙️ Голосовой звонок начался
+                      </p>
+                      <p className="text-[11px] text-emerald-400 font-medium">
+                        Чат активен • Прямой эфир
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsGroupVoiceChatOpen(true)}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold transition shadow-md shadow-emerald-500/25 active:scale-95 cursor-pointer flex items-center gap-1.5 flex-shrink-0"
+                    >
+                      <PhoneCall size={13} />
+                      <span>Подключиться</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            }
 
             {/* Special Call History Message in Chat */}
             if (msg.type === 'call') {

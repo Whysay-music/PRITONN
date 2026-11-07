@@ -14,6 +14,7 @@ import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { TelegramPremiumBadge } from './TelegramPremiumBadge';
 import { isUserVerified } from '../utils/verified';
 import { API_BASE_URL } from '../config';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 
 export interface CallRecord {
   id: string;
@@ -261,7 +262,8 @@ export const CallHistoryModal: React.FC<CallHistoryModalProps> = ({
                     {/* User Avatar */}
                     <div className="relative flex-shrink-0">
                       <img
-                        src={otherUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+                        src={getAvatarUrl(otherUser.avatar, otherUser.name)}
+                        onError={(e) => handleAvatarError(e, otherUser.name)}
                         alt={otherUser.name}
                         className="w-11 h-11 rounded-full object-cover shadow-sm"
                       />

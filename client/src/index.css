@@ -28,26 +28,71 @@
 .light-theme {
   --tg-bg: #eef1f5;
   --tg-sidebar: #ffffff;
-  --tg-surface: #f4f4f5;
-  --tg-surface-hover: #e9eef2;
+  --tg-surface: #ffffff;
+  --tg-surface-hover: #f1f5f9;
   --tg-accent: #3390ec;
   --tg-accent-hover: #267ecc;
   --tg-bubble-in: #ffffff;
-  --tg-bubble-out: #eeffde;
-  --tg-bubble-in-text: #111827;
-  --tg-bubble-out-text: #111827;
-  --tg-bubble-in-meta: #707579;
-  --tg-bubble-out-meta: #4fae4e;
-  --tg-text: #111827;
-  --tg-text-muted: #707579;
-  --tg-border: #dfe3e8;
-  --tg-pattern-opacity: 0.05;
+  --tg-bubble-out: #e3f2fd;
+  --tg-bubble-in-text: #0f172a;
+  --tg-bubble-out-text: #0f172a;
+  --tg-bubble-in-meta: #64748b;
+  --tg-bubble-out-meta: #2563eb;
+  --tg-text: #0f172a;
+  --tg-text-muted: #64748b;
+  --tg-border: #e2e8f0;
+  --tg-pattern-opacity: 0.04;
   --tg-date-pill-bg: rgba(0, 0, 0, 0.08);
-  --tg-date-pill-text: #475569;
-  --tg-titlebar-bg: #f5f6f8;
-  --tg-titlebar-border: #dfe3e8;
-  --tg-titlebar-text: #111827;
-  --tg-titlebar-muted: #707579;
+  --tg-date-pill-text: #334155;
+  --tg-titlebar-bg: #ffffff;
+  --tg-titlebar-border: #e2e8f0;
+  --tg-titlebar-text: #0f172a;
+  --tg-titlebar-muted: #64748b;
+}
+
+/* Global Light Theme Overrides for hardcoded dark classes */
+.light-theme,
+.light-theme body {
+  background-color: var(--tg-bg) !important;
+  color: var(--tg-text) !important;
+}
+
+.light-theme [class*="bg-[#0e1621]"] {
+  background-color: var(--tg-bg) !important;
+}
+.light-theme [class*="bg-[#17212b]"] {
+  background-color: var(--tg-sidebar) !important;
+}
+.light-theme [class*="bg-[#242f3d]"] {
+  background-color: var(--tg-surface) !important;
+}
+.light-theme [class*="bg-[#202b36]"] {
+  background-color: var(--tg-surface-hover) !important;
+}
+.light-theme [class*="bg-[#101921]"] {
+  background-color: #f8fafc !important;
+}
+.light-theme [class*="bg-[#182533]"] {
+  background-color: #ffffff !important;
+}
+.light-theme [class*="text-[#f5f5f5]"] {
+  color: var(--tg-text) !important;
+}
+.light-theme [class*="text-[#7f91a4]"] {
+  color: var(--tg-text-muted) !important;
+}
+.light-theme [class*="border-[#101921]"],
+.light-theme [class*="border-[#17212b]"],
+.light-theme [class*="border-[#242f3d]"] {
+  border-color: var(--tg-border) !important;
+}
+
+/* Safe area insets for modern mobile displays */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 body {

@@ -17,6 +17,7 @@ import { User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { TelegramPremiumBadge } from './TelegramPremiumBadge';
 import { isUserVerified } from '../utils/verified';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 
 interface TelegramDrawerMenuProps {
   isOpen: boolean;
@@ -79,17 +80,18 @@ export const TelegramDrawerMenu: React.FC<TelegramDrawerMenuProps> = ({
         aria-label="Закрыть меню"
       />
 
-      {/* Slide-out Drawer Panel starting below TitleBar (top-7) */}
+      {/* Slide-out Drawer Panel starting below TitleBar on Desktop, full height on Mobile */}
       <div
         onClick={(e) => e.stopPropagation()}
         style={{ zIndex: 2 }}
-        className="relative top-7 w-[290px] max-w-[85vw] h-[calc(100vh-28px)] bg-[var(--tg-sidebar)] shadow-2xl flex flex-col border-r border-[var(--tg-border)] text-[var(--tg-text)] animate-in slide-in-from-left duration-200"
+        className="relative md:top-7 top-0 w-[290px] max-w-[85vw] h-full md:h-[calc(100vh-28px)] bg-[var(--tg-sidebar)] shadow-2xl flex flex-col border-r border-[var(--tg-border)] text-[var(--tg-text)] animate-in slide-in-from-left duration-200"
       >
         {/* User Profile Header in Drawer */}
         <div className="p-4 bg-gradient-to-br from-[#2481cc] to-[#1c5f94] text-white flex flex-col gap-3 flex-shrink-0 shadow-md">
           <div className="flex items-center justify-between">
             <img
-              src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+              src={getAvatarUrl(currentUser.avatar, currentUser.name)}
+              onError={(e) => handleAvatarError(e, currentUser.name)}
               alt={currentUser.name}
               className="w-14 h-14 rounded-full object-cover border-2 border-white/40 shadow-sm"
             />

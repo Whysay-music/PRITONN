@@ -31,6 +31,7 @@ import { StoriesBar } from './StoriesBar';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { TelegramPremiumBadge } from './TelegramPremiumBadge';
 import { isUserVerified } from '../utils/verified';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 
 interface SidebarProps {
   chats: Chat[];
@@ -323,7 +324,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <div className="relative">
                   <img
-                    src={u.avatar}
+                    src={getAvatarUrl(u.avatar, u.name)}
+                    onError={(e) => handleAvatarError(e, u.name)}
                     alt={u.name}
                     className="w-10 h-10 rounded-full object-cover"
                   />
@@ -417,10 +419,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </div>
                   ) : (
                     <img
-                      src={
-                        displayAvatar ||
-                        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'
-                      }
+                      src={getAvatarUrl(displayAvatar, displayName)}
+                      onError={(e) => handleAvatarError(e, displayName)}
                       alt={displayName}
                       className="w-12 h-12 rounded-full object-cover shadow-sm"
                     />
@@ -539,11 +539,62 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Floating Action Button (New Channel/Group) */}
       <button
         onClick={onOpenNewChatModal}
-        className="absolute bottom-5 right-5 w-12 h-12 bg-[var(--tg-accent)] hover:bg-[var(--tg-accent-hover)] text-white rounded-full flex items-center justify-center shadow-lg transition hover:scale-105 z-20 cursor-pointer"
+        className="absolute bottom-18 md:bottom-5 right-5 w-12 h-12 bg-[var(--tg-accent)] hover:bg-[var(--tg-accent-hover)] text-white rounded-full flex items-center justify-center shadow-lg transition hover:scale-105 active:scale-95 z-20 cursor-pointer"
         title="Создать канал или группу"
       >
         <PlusCircle size={24} />
       </button>
+
+      {/* Modern Mobile Bottom Navigation Bar (Telegram style on mobile phones) */}
+      <nav className="md:hidden flex items-center justify-around py-2 px-1 border-t border-[var(--tg-border)] bg-[var(--tg-sidebar)] text-[var(--tg-text-muted)] z-20 pb-safe flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => {
+            setShowArchive(false);
+            if (activeTab !== 'all') onSelectTab?.('all');
+          }}
+          className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition cursor-pointer ${
+            !showArchive && activeTab === 'all' ? 'text-[#2481cc] font-semibold' : 'hover:text-[var(--tg-text)]'
+          }`}
+        >
+          <div className="relative">
+            <Radio size={20} />
+            {chats.reduce((acc, c) => acc + (c.unreadCount || 0), 0) > 0 && (
+              <span className="absolute -top-1 -right-2 px-1 min-w-[15px] h-3.5 bg-[#2481cc] text-white rounded-full text-[9px] font-bold flex items-center justify-center">
+                {chats.reduce((acc, c) => acc + (c.unreadCount || 0), 0)}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px]">Чаты</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onOpenCalls?.()}
+          className="flex flex-col items-center gap-1 py-1 px-3 rounded-xl hover:text-[var(--tg-text)] transition cursor-pointer"
+        >
+          <Phone size={20} />
+          <span className="text-[10px]">Звонки</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onCreateStory}
+          className="flex flex-col items-center gap-1 py-1 px-3 rounded-xl hover:text-[var(--tg-text)] transition cursor-pointer"
+        >
+          <PlusCircle size={20} className="text-[#2481cc]" />
+          <span className="text-[10px]">История</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenSettingsModal}
+          className="flex flex-col items-center gap-1 py-1 px-3 rounded-xl hover:text-[var(--tg-text)] transition cursor-pointer"
+        >
+          <Settings size={20} />
+          <span className="text-[10px]">Настройки</span>
+        </button>
+      </nav>
 
       {/* Telegram Desktop Chat Context Menu */}
       {chatContextMenu && (

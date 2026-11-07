@@ -3,6 +3,7 @@ import { User as UserIcon, X, Camera, Moon, Sun, Upload, Check, Folder, Sparkles
 import { User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { API_BASE_URL } from '../config';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -146,7 +147,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               title="Нажмите, чтобы загрузить новое фото"
             >
               <img
-                src={avatar}
+                src={getAvatarUrl(avatar, name)}
+                onError={(e) => handleAvatarError(e, name)}
                 alt={name}
                 className="w-full h-full object-cover"
               />

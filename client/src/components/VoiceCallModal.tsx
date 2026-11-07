@@ -23,6 +23,7 @@ import { Chat, User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { isUserVerified } from '../utils/verified';
 import { ScreenSharePickerModal, DesktopSource } from './ScreenSharePickerModal';
+import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 
 interface VoiceCallModalProps {
   chat: Chat | null;
@@ -55,7 +56,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   onClose,
 }) => {
   const [seconds, setSeconds] = useState(0);
-  const [status, setStatus] = useState<'calling' | 'connecting' | 'active'>(
+  const [status, setStatus] = useState<'calling' | 'connecting' | 'active' | 'no_answer' | 'declined'>(
     isIncomingAccepted ? 'active' : 'calling'
   );
   const [isMuted, setIsMuted] = useState(false);
@@ -418,12 +419,22 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       }
 
       callTimeoutTimer = setTimeout(() => {
-        isCallConnectedRef.current = true;
-        stopRingtone();
-        playConnectChime();
-        setStatus('active');
-        setIsSoloEchoMode(true);
-      }, 7000);
+        if (!isCallConnectedRef.current) {
+          stopRingtone();
+          setStatus('no_answer');
+          if (socket && targetUserId && currentUser) {
+            socket.emit('end_call', {
+              targetUserId,
+              callerId: currentUser.id,
+              status: 'missed',
+              chatId: chat?.id,
+            });
+          }
+          setTimeout(() => {
+            handleEndCall();
+          }, 2500);
+        }
+      }, 28000);
     } else {
       isCallConnectedRef.current = true;
       stopRingtone();
@@ -1525,6 +1536,16 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
               {status === 'connecting' && (
                 <span className="text-amber-400 font-medium flex items-center gap-1.5 justify-center animate-pulse">
                   <span>Соединение...</span>
+                </span>
+              )}
+              {status === 'no_answer' && (
+                <span className="text-rose-400 font-semibold flex items-center gap-1.5 justify-center animate-pulse">
+                  <span>Абонент не отвечает...</span>
+                </span>
+              )}
+              {status === 'declined' && (
+                <span className="text-rose-400 font-semibold flex items-center gap-1.5 justify-center">
+                  <span>Звонок отклонён</span>
                 </span>
               )}
               {status === 'active' && (

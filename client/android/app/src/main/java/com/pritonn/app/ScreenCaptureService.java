@@ -3,6 +3,7 @@ package com.pritonn.app;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
@@ -19,12 +20,33 @@ public class ScreenCaptureService extends Service {
         try {
             createNotificationChannel();
 
+            int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                piFlags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+
+            Intent openIntent = new Intent(this, MainActivity.class);
+            openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            openIntent.putExtra("callAction", "expand");
+            PendingIntent openPi = PendingIntent.getActivity(this, 2201, openIntent, piFlags);
+
+            Intent stopScreenIntent = new Intent(this, CallActionReceiver.class);
+            stopScreenIntent.setAction(CallActionReceiver.ACTION_STOP_SCREEN);
+            PendingIntent stopScreenPi = PendingIntent.getBroadcast(this, 2202, stopScreenIntent, piFlags);
+
+            Intent endCallIntent = new Intent(this, CallActionReceiver.class);
+            endCallIntent.setAction(CallActionReceiver.ACTION_END_CALL);
+            PendingIntent endCallPi = PendingIntent.getBroadcast(this, 2203, endCallIntent, piFlags);
+
             Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_view)
-                .setContentTitle("PRITONN")
-                .setContentText("Идёт демонстрация экрана")
+                .setContentTitle("PRITONN • Идёт демонстрация экрана")
+                .setContentText("Собеседники видят ваш экран. Нажмите «Выкл. экран» для остановки.")
+                .setContentIntent(openPi)
                 .setOngoing(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Выкл. экран", stopScreenPi)
+                .addAction(android.R.drawable.sym_action_call, "Завершить звонок", endCallPi)
                 .build();
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

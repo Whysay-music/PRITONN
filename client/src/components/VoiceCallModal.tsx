@@ -32,8 +32,14 @@ import { VoiceEffectType, AVAILABLE_VOICE_EFFECTS, applyVoiceEffect } from '../u
 import {
   hasNativeAndroidScreenShare,
   startNativeAndroidScreenShare,
+  forceStopNativeAndroidScreenShare,
   MobileScreenShareSession,
 } from '../utils/mobileScreenShare';
+import {
+  updateActiveCallSystemNotification,
+  clearCallSystemNotifications,
+  onSystemCallAction,
+} from '../utils/notifications';
 
 interface VoiceCallModalProps {
   chat: Chat | null;
@@ -42,6 +48,8 @@ interface VoiceCallModalProps {
   allUsers?: User[];
   socket?: Socket | null;
   isIncomingAccepted?: boolean;
+  isMinimizedControlled?: boolean;
+  onToggleMinimize?: (min: boolean) => void;
   onClose: () => void;
 }
 
@@ -63,6 +71,8 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   allUsers = [],
   socket,
   isIncomingAccepted = false,
+  isMinimizedControlled,
+  onToggleMinimize,
   onClose,
 }) => {
   const [seconds, setSeconds] = useState(0);
@@ -84,7 +94,12 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const [remoteScreenSenderName, setRemoteScreenSenderName] = useState<string>('');
   const [selectedCallStream, setSelectedCallStream] = useState<'remote' | 'local'>('remote');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
+  const [localMinimized, setLocalMinimized] = useState(false);
+  const isMinimized = isMinimizedControlled !== undefined ? isMinimizedControlled : localMinimized;
+  const setMinimizedState = useCallback((min: boolean) => {
+    setLocalMinimized(min);
+    if (onToggleMinimize) onToggleMinimize(min);
+  }, [onToggleMinimize]);
   const [isSoloEchoMode, setIsSoloEchoMode] = useState(false);
   const [visualizerHeights, setVisualizerHeights] = useState<number[]>([
     8, 14, 10, 18, 12, 16, 20, 14, 18, 15, 10, 19,
@@ -813,7 +828,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         if (isSharing) {
           setRemoteScreenSenderName(callerName || 'Собеседник');
           setIsViewingRemoteScreen(true);
-          setIsMinimized(false);
+          setMinimizedState(false);
         } else {
           setIsViewingRemoteScreen(false);
           setIsRemoteVideoPlaying(false);
@@ -1155,7 +1170,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const startStreamWithMedia = async (screenStream: MediaStream, skipCanvasLoop = false) => {
     screenStreamRef.current = screenStream;
     setIsScreenSharing(true);
-    setIsMinimized(false);
+    setMinimizedState(false);
 
     if (localScreenVideoRef.current) {
       localScreenVideoRef.current.srcObject = screenStream;
@@ -1413,10 +1428,12 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   };
 
   // End Call & Cleanup
-  const handleEndCall = (e?: React.MouseEvent) => {
+  const handleEndCall = useCallback((e?: React.MouseEvent) => {
     e?.stopPropagation();
     stopRingtone();
     stopCameraFrameFallback();
+    forceStopNativeAndroidScreenShare();
+    clearCallSystemNotifications();
     if (isScreenSharing) {
       stopScreenSharing();
     }
@@ -1464,7 +1481,104 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       audioContextRef.current = null;
     }
     onClose();
-  };
+  }, [
+    stopRingtone,
+    stopCameraFrameFallback,
+    isScreenSharing,
+    stopScreenSharing,
+    socket,
+    targetUserId,
+    currentUser,
+    isIncomingAccepted,
+    seconds,
+    isVideoEnabled,
+    chat?.id,
+    onClose,
+  ]);
+
+  // Guaranteed unmount cleanup (prevents ghost screen shares & background WebRTC audio)
+  useEffect(() => {
+    return () => {
+      stopRingtone();
+      stopCameraFrameFallback();
+      forceStopNativeAndroidScreenShare();
+      clearCallSystemNotifications();
+      if (frameIntervalRef.current) {
+        clearInterval(frameIntervalRef.current);
+        frameIntervalRef.current = null;
+      }
+      if (mobileScreenSessionRef.current) {
+        try {
+          mobileScreenSessionRef.current.stop();
+        } catch {}
+        mobileScreenSessionRef.current = null;
+      }
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
+        });
+        localStreamRef.current = null;
+      }
+      if (rawMicStreamRef.current) {
+        rawMicStreamRef.current.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
+        });
+        rawMicStreamRef.current = null;
+      }
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
+        });
+        screenStreamRef.current = null;
+      }
+      if (peerConnectionRef.current) {
+        try {
+          peerConnectionRef.current.close();
+        } catch {}
+        peerConnectionRef.current = null;
+      }
+      if (effectCleanupRef.current) {
+        try {
+          effectCleanupRef.current();
+        } catch {}
+        effectCleanupRef.current = null;
+      }
+    };
+  }, [stopRingtone, stopCameraFrameFallback]);
+
+  // Sync active OS Call & Screen Sharing Notification
+  useEffect(() => {
+    if (status === 'active' || status === 'connecting') {
+      updateActiveCallSystemNotification({
+        title: `📞 ${targetName}`,
+        body: isScreenSharing
+          ? '🖥️ Вы транслируете экран в звонке'
+          : `Звонок активен (${formatTime(seconds)})`,
+        isScreenSharing,
+        chatId: chat?.id,
+      });
+    }
+  }, [status, isScreenSharing, seconds, targetName, chat?.id]);
+
+  // Handle system actions from Android shade / PC toast / Web SW
+  useEffect(() => {
+    const unsub = onSystemCallAction(({ action }) => {
+      if (action === 'hangup') {
+        handleEndCall();
+      } else if (action === 'stop_screen') {
+        stopScreenSharing();
+      } else if (action === 'expand') {
+        setMinimizedState(false);
+      }
+    });
+    return unsub;
+  }, [handleEndCall, stopScreenSharing, setMinimizedState]);
 
   const formatTime = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -1491,7 +1605,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         <audio ref={setRemoteAudio} autoPlay playsInline muted={!isSpeakerOn} />
 
         <div
-          onClick={() => setIsMinimized(false)}
+          onClick={() => setMinimizedState(false)}
           style={{ zIndex: 9999 }}
           className="fixed top-3 left-1/2 -translate-x-1/2 bg-[#17212b]/95 hover:bg-[#202b36] border border-[#2b5278] hover:border-[#5288c1] backdrop-blur-md rounded-2xl px-3.5 py-2 shadow-2xl flex items-center gap-3 cursor-pointer transition-all duration-200 select-none group max-w-[94vw] animate-pop-in"
           title="Нажмите в любое место, чтобы вернуться к звонку"
@@ -1531,6 +1645,21 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 ml-1" onClick={(e) => e.stopPropagation()}>
+            {isScreenSharing && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  stopScreenSharing();
+                }}
+                className="px-2 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                title="Остановить трансляцию экрана"
+              >
+                <MonitorUp size={13} />
+                <span className="hidden xs:inline">Выкл. экран</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={(e) => handleToggleMute(e)}
@@ -1555,7 +1684,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
             <button
               type="button"
-              onClick={() => setIsMinimized(false)}
+              onClick={() => setMinimizedState(false)}
               className="px-2.5 py-1.5 rounded-xl bg-[#2481cc] hover:bg-[#1e70b3] text-white transition shadow-md flex items-center gap-1 text-xs font-semibold cursor-pointer active:scale-95"
               title="Развернуть звонок"
             >
@@ -1635,7 +1764,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
             <button
               type="button"
-              onClick={() => setIsMinimized(true)}
+              onClick={() => setMinimizedState(true)}
               className="p-2 rounded-xl bg-[#242f3d] hover:bg-[#2c394a] text-[#7f91a4] hover:text-white transition cursor-pointer flex items-center gap-1 text-xs"
               title="Свернуть звонок в плавающее окно"
             >
@@ -1644,6 +1773,26 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Prominent Quick-Stop Badge when current user shares screen */}
+        {isScreenSharing && (
+          <div className="w-full mb-2 px-3 py-1.5 bg-rose-500/15 border border-rose-500/40 rounded-2xl flex items-center justify-between gap-2 animate-fade-in flex-shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping flex-shrink-0" />
+              <span className="text-xs font-bold text-rose-200 truncate">
+                Вы делитесь своим экраном — собеседники видят ваш экран
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={stopScreenSharing}
+              className="px-3 py-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition shadow-md flex items-center gap-1 cursor-pointer flex-shrink-0 active:scale-95"
+            >
+              <MonitorUp size={13} />
+              <span>Выкл. экран</span>
+            </button>
+          </div>
+        )}
 
         {/* --- THEATER SCREEN / CAMERA VIEW --- */}
         {isTheaterActive ? (

@@ -42,6 +42,17 @@
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
 
+        <receiver
+            android:name=".CallActionReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.pritonn.app.ACTION_DECLINE_CALL" />
+                <action android:name="com.pritonn.app.ACTION_END_CALL" />
+                <action android:name="com.pritonn.app.ACTION_STOP_SCREEN" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Minus, Square, X, Maximize2, Send, Volume2, VolumeX } from 'lucide-react';
+import { Minus, Square, X, Maximize2, Volume2, VolumeX } from 'lucide-react';
 import { Chat, User } from '../types';
+import { APP_VERSION } from '../config';
+import { areSoundsEnabled, setSoundsEnabled } from '../utils/notifications';
 
 interface DesktopTitleBarProps {
   activeChat: Chat | null;
@@ -15,14 +17,21 @@ export const DesktopTitleBar: React.FC<DesktopTitleBarProps> = ({
   allUsers,
 }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [soundsActive, setSoundsActive] = useState<boolean>(() => areSoundsEnabled());
 
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
+    const handleSettingsChanged = () => {
+      setSoundsActive(areSoundsEnabled());
+    };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    window.addEventListener('pritonn-settings-changed', handleSettingsChanged);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('pritonn-settings-changed', handleSettingsChanged);
+    };
   }, []);
 
   const toggleFullscreen = () => {
@@ -33,12 +42,19 @@ export const DesktopTitleBar: React.FC<DesktopTitleBarProps> = ({
     }
   };
 
+  const handleToggleSound = () => {
+    const next = !soundsActive;
+    setSoundsActive(next);
+    setSoundsEnabled(next);
+  };
+
   let chatTitle = 'PRITONN';
   if (activeChat) {
     if (activeChat.type === 'saved') {
       chatTitle = 'Избранное';
     } else if (activeChat.type === 'direct') {
-      const otherUserId = activeChat.members?.find((id) => id !== currentUser?.id) || activeChat.targetUserId;
+      const otherUserId =
+        activeChat.members?.find((id) => id !== currentUser?.id) || activeChat.targetUserId;
       const target = allUsers?.find((u) => u.id === otherUserId) || activeChat.targetUser;
       chatTitle = target?.name || activeChat.displayName || activeChat.name;
     } else {
@@ -55,9 +71,11 @@ export const DesktopTitleBar: React.FC<DesktopTitleBarProps> = ({
           alt="PRITONN"
           className="w-4 h-4 rounded-full object-cover border border-[#2b5278]"
         />
-        <span className="font-semibold text-[11px] text-[var(--tg-titlebar-text)] tracking-wide">PRITONN</span>
-        <span className="text-[10px] text-[#5288c1] bg-[var(--tg-surface)] px-1.5 py-0.2 rounded border border-[var(--tg-border)]">
-          v5.8.3
+        <span className="font-semibold text-[11px] text-[var(--tg-titlebar-text)] tracking-wide">
+          PRITONN
+        </span>
+        <span className="text-[10px] text-[#5288c1] bg-[var(--tg-surface)] px-1.5 py-0.2 rounded border border-[var(--tg-border)] font-mono">
+          v{APP_VERSION}
         </span>
       </div>
 
@@ -69,16 +87,19 @@ export const DesktopTitleBar: React.FC<DesktopTitleBarProps> = ({
       {/* Window Controls */}
       <div className="flex items-center gap-0.5">
         <button
-          onClick={() => setIsMuted(!isMuted)}
-          className="p-1 hover:bg-[var(--tg-surface-hover)] hover:text-[var(--tg-text)] rounded transition text-[var(--tg-titlebar-muted)]"
-          title={isMuted ? 'Включить звук' : 'Отключить звук'}
+          type="button"
+          onClick={handleToggleSound}
+          className="p-1 hover:bg-[var(--tg-surface-hover)] hover:text-[var(--tg-text)] rounded transition text-[var(--tg-titlebar-muted)] cursor-pointer"
+          title={soundsActive ? 'Отключить звуки уведомлений' : 'Включить звуки уведомлений'}
         >
-          {isMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}
+          {soundsActive ? <Volume2 size={12} /> : <VolumeX size={12} className="text-rose-400" />}
         </button>
 
         <button
+          type="button"
           onClick={() => {
-            const electron = (window as unknown as { electronAPI?: { maximize: () => void } }).electronAPI;
+            const electron = (window as unknown as { electronAPI?: { maximize: () => void } })
+              .electronAPI;
             if (electron) {
               electron.maximize();
             } else {
@@ -92,23 +113,27 @@ export const DesktopTitleBar: React.FC<DesktopTitleBarProps> = ({
         </button>
 
         <button
+          type="button"
           onClick={() => {
-            const electron = (window as unknown as { electronAPI?: { minimize: () => void } }).electronAPI;
+            const electron = (window as unknown as { electronAPI?: { minimize: () => void } })
+              .electronAPI;
             if (electron) {
               electron.minimize();
-            } else {
-              window.location.reload();
+            } else if (document.fullscreenElement) {
+              document.exitFullscreen().catch(() => {});
             }
           }}
           className="p-1 hover:bg-[var(--tg-surface-hover)] hover:text-[var(--tg-text)] rounded transition text-[var(--tg-titlebar-muted)] cursor-pointer"
-          title="Свернуть"
+          title="Свернуть окно"
         >
           <Minus size={12} />
         </button>
 
         <button
+          type="button"
           onClick={() => {
-            const electron = (window as unknown as { electronAPI?: { close: () => void } }).electronAPI;
+            const electron = (window as unknown as { electronAPI?: { close: () => void } })
+              .electronAPI;
             if (electron) {
               electron.close();
             } else if (window.confirm('Закрыть PRITONN?')) {

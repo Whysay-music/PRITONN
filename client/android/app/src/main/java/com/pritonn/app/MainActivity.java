@@ -62,12 +62,17 @@ public class MainActivity extends BridgeActivity {
 
     private static final String MSG_CHANNEL_ID = "pritonn_messages_v2";
     private static final String CALL_CHANNEL_ID = "pritonn_calls_v2";
+    private static final String ACTIVE_CALL_CHANNEL_ID = "pritonn_active_call_v2";
+
+    public static final int INCOMING_CALL_NOTIF_ID = 4099;
+    public static final int ACTIVE_CALL_NOTIF_ID = 4100;
 
     private static WeakReference<MainActivity> currentInstanceRef;
 
     private int pendingProjectionResultCode = 0;
     private Intent pendingProjectionData = null;
     private File pendingApkInstallFile = null;
+    private volatile long suppressBackUntilMs = 0L;
 
     private MediaProjection mediaProjection = null;
     private VirtualDisplay virtualDisplay = null;
@@ -143,6 +148,25 @@ public class MainActivity extends BridgeActivity {
 
     private void handleNotificationIntent(Intent intent) {
         if (intent == null) return;
+
+        final String callAction = intent.getStringExtra("callAction");
+        if (callAction != null && !callAction.isEmpty()) {
+            final String callerId = intent.getStringExtra("callerId");
+            final String callChatId = intent.getStringExtra("chatId");
+            intent.removeExtra("callAction");
+            intent.removeExtra("callerId");
+            intent.removeExtra("chatId");
+
+            if ("accept".equals(callAction)) {
+                try {
+                    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                    if (nm != null) nm.cancel(INCOMING_CALL_NOTIF_ID);
+                } catch (Throwable ignored) {}
+            }
+
+            dispatchCallActionToWeb(callAction, callerId, callChatId, 320);
+        }
+
         final String chatId = intent.getStringExtra("openChatId");
         if (chatId != null && !chatId.isEmpty()) {
             intent.removeExtra("openChatId");
@@ -151,6 +175,35 @@ public class MainActivity extends BridgeActivity {
                 () -> evalJs("window.__onAndroidNotificationOpen && window.__onAndroidNotificationOpen('" + safeId + "');"),
                 450
             );
+        }
+    }
+
+    private void dispatchCallActionToWeb(final String action, final String callerId, final String chatId, long delayMs) {
+        final String safeAction = action != null ? action.replace("'", "").replace("\\", "") : "";
+        final String safeCaller = callerId != null ? callerId.replace("'", "").replace("\\", "") : "";
+        final String safeChat = chatId != null ? chatId.replace("'", "").replace("\\", "") : "";
+        final String js =
+            "(function(){var payload={action:'" + safeAction + "',callerId:'" + safeCaller + "',chatId:'" + safeChat + "'};"
+            + "if(window.__onAndroidCallAction){window.__onAndroidCallAction(payload.action,payload.callerId,payload.chatId);}"
+            + "else{window.__pendingAndroidCallAction=payload;}})();";
+        if (delayMs > 0) {
+            new Handler(getMainLooper()).postDelayed(() -> evalJs(js), delayMs);
+        } else {
+            evalJs(js);
+        }
+    }
+
+    public static void dispatchCallActionFromReceiver(String action, String callerId, String chatId) {
+        MainActivity activity = currentInstanceRef != null ? currentInstanceRef.get() : null;
+        if (activity != null) {
+            activity.dispatchCallActionToWeb(action, callerId, chatId, 0);
+        }
+    }
+
+    public static void stopScreenShareFromReceiver(boolean notifyJs) {
+        MainActivity activity = currentInstanceRef != null ? currentInstanceRef.get() : null;
+        if (activity != null) {
+            activity.runOnUiThread(() -> activity.stopNativeScreenCapture(notifyJs));
         }
     }
 
@@ -236,6 +289,15 @@ public class MainActivity extends BridgeActivity {
                 callChannel.setSound(ringUri, attrs);
             }
             nm.createNotificationChannel(callChannel);
+
+            NotificationChannel activeCallChannel = new NotificationChannel(
+                ACTIVE_CALL_CHANNEL_ID,
+                "Текущий звонок PRITONN",
+                NotificationManager.IMPORTANCE_LOW
+            );
+            activeCallChannel.setDescription("Управление активным звонком и демонстрацией экрана");
+            activeCallChannel.setSound(null, null);
+            nm.createNotificationChannel(activeCallChannel);
         }
     }
 
@@ -360,11 +422,128 @@ public class MainActivity extends BridgeActivity {
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setCategory(isCall ? NotificationCompat.CATEGORY_CALL : NotificationCompat.CATEGORY_MESSAGE);
 
-                int notifId = isCall ? 4099 : (3100 + (reqCode % 5000));
+                int notifId = isCall ? INCOMING_CALL_NOTIF_ID : (3100 + (reqCode % 5000));
                 nm.notify(notifId, builder.build());
             } catch (Throwable e) {
                 e.printStackTrace();
             }
+        }
+
+        @JavascriptInterface
+        public void showIncomingCallNotification(String callerId, String callerName, String chatId, boolean isVideo) {
+            if (!areNotificationsEnabledPref()) return;
+            try {
+                ensureNotificationChannels();
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm == null) return;
+
+                int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    piFlags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+
+                Intent openIntent = new Intent(MainActivity.this, MainActivity.class);
+                openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                openIntent.putExtra("callAction", "expand");
+                openIntent.putExtra("callerId", callerId != null ? callerId : "");
+                openIntent.putExtra("chatId", chatId != null ? chatId : "");
+                PendingIntent openPi = PendingIntent.getActivity(MainActivity.this, 4901, openIntent, piFlags);
+
+                Intent acceptIntent = new Intent(MainActivity.this, MainActivity.class);
+                acceptIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                acceptIntent.putExtra("callAction", "accept");
+                acceptIntent.putExtra("callerId", callerId != null ? callerId : "");
+                acceptIntent.putExtra("chatId", chatId != null ? chatId : "");
+                PendingIntent acceptPi = PendingIntent.getActivity(MainActivity.this, 4902, acceptIntent, piFlags);
+
+                Intent declineIntent = new Intent(MainActivity.this, CallActionReceiver.class);
+                declineIntent.setAction(CallActionReceiver.ACTION_DECLINE_CALL);
+                declineIntent.putExtra("callerId", callerId != null ? callerId : "");
+                declineIntent.putExtra("chatId", chatId != null ? chatId : "");
+                PendingIntent declinePi = PendingIntent.getBroadcast(MainActivity.this, 4903, declineIntent, piFlags);
+
+                String safeName = (callerName != null && !callerName.trim().isEmpty()) ? callerName : "Собеседник";
+                String subtitle = isVideo ? "Входящий видеозвонок в PRITONN" : "Входящий аудиозвонок в PRITONN";
+
+                NotificationCompat.Builder builder = new NotificationCompat.Builder(MainActivity.this, CALL_CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.sym_call_incoming)
+                    .setContentTitle("📞 " + safeName)
+                    .setContentText(subtitle)
+                    .setContentIntent(openPi)
+                    .setFullScreenIntent(openPi, true)
+                    .setOngoing(true)
+                    .setAutoCancel(false)
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                    .addAction(android.R.drawable.sym_action_call, "Принять", acceptPi)
+                    .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Отклонить", declinePi);
+
+                nm.notify(INCOMING_CALL_NOTIF_ID, builder.build());
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
+        }
+
+        @JavascriptInterface
+        public void showActiveCallNotification(String title, String body, boolean isScreenSharing) {
+            try {
+                ensureNotificationChannels();
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm == null) return;
+
+                // Clear incoming ring notification once active
+                nm.cancel(INCOMING_CALL_NOTIF_ID);
+
+                int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    piFlags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+
+                Intent openIntent = new Intent(MainActivity.this, MainActivity.class);
+                openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                openIntent.putExtra("callAction", "expand");
+                PendingIntent openPi = PendingIntent.getActivity(MainActivity.this, 4911, openIntent, piFlags);
+
+                Intent endIntent = new Intent(MainActivity.this, CallActionReceiver.class);
+                endIntent.setAction(CallActionReceiver.ACTION_END_CALL);
+                PendingIntent endPi = PendingIntent.getBroadcast(MainActivity.this, 4912, endIntent, piFlags);
+
+                NotificationCompat.Builder builder = new NotificationCompat.Builder(MainActivity.this, ACTIVE_CALL_CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.sym_action_call)
+                    .setContentTitle(title != null && !title.isEmpty() ? title : "Активный звонок PRITONN")
+                    .setContentText(body != null && !body.isEmpty() ? body : "Нажмите, чтобы вернуться в звонок")
+                    .setContentIntent(openPi)
+                    .setOngoing(true)
+                    .setOnlyAlertOnce(true)
+                    .setSilent(true)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
+
+                if (isScreenSharing) {
+                    Intent stopScreenIntent = new Intent(MainActivity.this, CallActionReceiver.class);
+                    stopScreenIntent.setAction(CallActionReceiver.ACTION_STOP_SCREEN);
+                    PendingIntent stopScreenPi = PendingIntent.getBroadcast(MainActivity.this, 4913, stopScreenIntent, piFlags);
+                    builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Выкл. экран", stopScreenPi);
+                }
+
+                builder.addAction(android.R.drawable.ic_menu_call, "Завершить звонок", endPi);
+                nm.notify(ACTIVE_CALL_NOTIF_ID, builder.build());
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
+        }
+
+        @JavascriptInterface
+        public void cancelCallNotifications() {
+            try {
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm != null) {
+                    nm.cancel(INCOMING_CALL_NOTIF_ID);
+                    nm.cancel(ACTIVE_CALL_NOTIF_ID);
+                }
+            } catch (Throwable ignored) {}
         }
 
         @JavascriptInterface
@@ -513,6 +692,7 @@ public class MainActivity extends BridgeActivity {
                         return;
                     }
                     Intent captureIntent = mgr.createScreenCaptureIntent();
+                    suppressBackUntilMs = System.currentTimeMillis() + 2000L;
                     startActivityForResult(captureIntent, SCREEN_CAPTURE_REQUEST_CODE);
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -540,6 +720,7 @@ public class MainActivity extends BridgeActivity {
             return;
         }
         if (requestCode == SCREEN_CAPTURE_REQUEST_CODE) {
+            suppressBackUntilMs = System.currentTimeMillis() + 1200L;
             if (resultCode == Activity.RESULT_OK && data != null) {
                 pendingProjectionResultCode = resultCode;
                 pendingProjectionData = data;
@@ -776,11 +957,21 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onDestroy() {
         stopNativeScreenCapture(false);
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                nm.cancel(INCOMING_CALL_NOTIF_ID);
+                nm.cancel(ACTIVE_CALL_NOTIF_ID);
+            }
+        } catch (Throwable ignored) {}
         super.onDestroy();
     }
 
     @Override
     public void onBackPressed() {
+        if (System.currentTimeMillis() < suppressBackUntilMs) {
+            return;
+        }
         WebView webView = this.getBridge() != null ? this.getBridge().getWebView() : null;
         if (webView != null) {
             webView.evaluateJavascript(

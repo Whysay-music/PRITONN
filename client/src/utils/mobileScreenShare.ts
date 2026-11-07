@@ -12,6 +12,7 @@ declare global {
     __onAndroidScreenStarted?: () => void;
     __onAndroidScreenFrame?: (dataUrl: string) => void;
     __onAndroidScreenStopped?: () => void;
+    __onAndroidScreenError?: (reason?: string) => void;
   }
 }
 
@@ -22,8 +23,7 @@ export interface MobileScreenShareSession {
 }
 
 /**
- * Starts native Android system screen capture (via MediaProjection ForegroundService bridge)
- * when running inside the PRITONN Android APK, returning a live Canvas MediaStream + frame callback.
+ * Checks whether the native Android APK MediaProjection bridge is available.
  */
 export function hasNativeAndroidScreenShare(): boolean {
   try {
@@ -33,6 +33,23 @@ export function hasNativeAndroidScreenShare(): boolean {
   }
 }
 
+/**
+ * Unconditionally stops any active native Android MediaProjection screen capture.
+ */
+export function forceStopNativeAndroidScreenShare(): void {
+  try {
+    window.__onAndroidScreenStarted = undefined;
+    window.__onAndroidScreenFrame = undefined;
+    window.__onAndroidScreenStopped = undefined;
+    window.__onAndroidScreenError = undefined;
+    window.AndroidScreenShare?.stopScreenShare?.();
+  } catch {}
+}
+
+/**
+ * Starts native Android system screen capture (via MediaProjection ForegroundService bridge)
+ * when running inside the PRITONN Android APK, returning a live Canvas MediaStream + frame callback.
+ */
 export function startNativeAndroidScreenShare(
   onFrame: (jpegDataUrl: string) => void,
   onRemoteStop: () => void
@@ -62,6 +79,15 @@ export function startNativeAndroidScreenShare(
       window.__onAndroidScreenStarted = undefined;
       window.__onAndroidScreenFrame = undefined;
       window.__onAndroidScreenStopped = undefined;
+      window.__onAndroidScreenError = undefined;
+    };
+
+    const stopTracks = () => {
+      stream.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {}
+      });
     };
 
     const stop = () => {
@@ -70,9 +96,7 @@ export function startNativeAndroidScreenShare(
       try {
         window.AndroidScreenShare?.stopScreenShare?.();
       } catch {}
-      stream.getTracks().forEach((t) => {
-        try { t.stop(); } catch {}
-      });
+      stopTracks();
     };
 
     window.__onAndroidScreenStarted = () => {
@@ -112,12 +136,21 @@ export function startNativeAndroidScreenShare(
 
     window.__onAndroidScreenStopped = () => {
       cleanupCallbacks();
-      stream.getTracks().forEach((t) => {
-        try { t.stop(); } catch {}
-      });
+      stopTracks();
       if (!settled) {
         settled = true;
-        reject(new Error('Screen share cancelled'));
+        reject(new Error('canceled'));
+      } else {
+        onRemoteStop();
+      }
+    };
+
+    window.__onAndroidScreenError = (reason?: string) => {
+      cleanupCallbacks();
+      stopTracks();
+      if (!settled) {
+        settled = true;
+        reject(new Error(reason || 'canceled'));
       } else {
         onRemoteStop();
       }
@@ -127,6 +160,7 @@ export function startNativeAndroidScreenShare(
       window.AndroidScreenShare.startScreenShare();
     } catch (err) {
       cleanupCallbacks();
+      stopTracks();
       reject(err);
     }
   });

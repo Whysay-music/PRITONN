@@ -9,7 +9,9 @@ import { CreateStoryModal } from './components/CreateStoryModal';
 import { NewChatModal } from './components/NewChatModal';
 import { SettingsModal } from './components/SettingsModal';
 import { VoiceCallModal } from './components/VoiceCallModal';
+import { GroupVoiceChatModal } from './components/GroupVoiceChatModal';
 import { IncomingCallModal } from './components/IncomingCallModal';
+import { CallErrorBoundary } from './components/CallErrorBoundary';
 import { InviteMembersModal } from './components/InviteMembersModal';
 import { DeleteMessageModal } from './components/DeleteMessageModal';
 import { DeleteChatModal } from './components/DeleteChatModal';
@@ -32,6 +34,8 @@ import {
   areNotificationsEnabled,
   showAppNotification,
   syncNativeBackgroundSettings,
+  clearCallSystemNotifications,
+  onSystemCallAction,
 } from './utils/notifications';
 import { AppUpdateInfo, checkForAppUpdate, installAppUpdate } from './utils/updater';
 
@@ -149,8 +153,12 @@ export const App: React.FC = () => {
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isVoiceCallOpen, setIsVoiceCallOpen] = useState(false);
+  const [isVoiceCallMinimized, setIsVoiceCallMinimized] = useState(false);
   const [callChat, setCallChat] = useState<Chat | null>(null);
   const [callTargetUser, setCallTargetUser] = useState<User | null>(null);
+  const [isGroupVoiceChatOpen, setIsGroupVoiceChatOpen] = useState(false);
+  const [groupCallChat, setGroupCallChat] = useState<Chat | null>(null);
+  const [isGroupCallMinimized, setIsGroupCallMinimized] = useState(false);
   const [isCallHistoryOpen, setIsCallHistoryOpen] = useState(false);
   const [incomingCall, setIncomingCall] = useState<{
     callerId: string;
@@ -228,8 +236,12 @@ export const App: React.FC = () => {
         setIsFoldersModalOpen(false);
         return;
       }
-      if (isVoiceCallOpen) {
-        setIsVoiceCallOpen(false);
+      if (isVoiceCallOpen && !isVoiceCallMinimized) {
+        setIsVoiceCallMinimized(true);
+        return;
+      }
+      if (isGroupVoiceChatOpen && !isGroupCallMinimized) {
+        setIsGroupCallMinimized(true);
         return;
       }
       if (isInfoDrawerOpen) {
@@ -257,6 +269,9 @@ export const App: React.FC = () => {
     isNewChatOpen,
     isFoldersModalOpen,
     isVoiceCallOpen,
+    isVoiceCallMinimized,
+    isGroupVoiceChatOpen,
+    isGroupCallMinimized,
     isInfoDrawerOpen,
   ]);
 
@@ -1433,6 +1448,31 @@ export const App: React.FC = () => {
         </div>
       )}
 
+      {/* Top Active Call Bar across entire app when Minimized */}
+      {((isVoiceCallOpen && isVoiceCallMinimized) || (isGroupVoiceChatOpen && isGroupCallMinimized)) && (
+        <div
+          onClick={() => {
+            if (isVoiceCallOpen) setIsVoiceCallMinimized(false);
+            if (isGroupVoiceChatOpen) setIsGroupCallMinimized(false);
+          }}
+          className="bg-gradient-to-r from-emerald-600 via-teal-600 to-[#2481cc] text-white px-4 py-2 text-xs flex items-center justify-between shadow-md z-40 cursor-pointer select-none animate-fade-in hover:brightness-105 transition"
+        >
+          <div className="flex items-center gap-2.5 truncate">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-300 animate-ping flex-shrink-0" />
+            <span className="font-bold truncate">
+              {isVoiceCallOpen
+                ? `📞 Звонок: ${callTargetUser?.name || callChat?.displayName || callChat?.name || 'Собеседник'}`
+                : `🎙 Голосовой чат: ${groupCallChat?.displayName || groupCallChat?.name || 'Группа'}`}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-xl text-xs font-bold transition">
+              Развернуть звонок
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Global Music Player (Header Bar) */}
       <GlobalMusicPlayer
         currentTrack={activeAudioTrack}
@@ -1518,7 +1558,13 @@ export const App: React.FC = () => {
                 setCallTargetUser(activeChat.targetUser || null);
               }
               setIsIncomingAccepted(false);
+              setIsVoiceCallMinimized(false);
               setIsVoiceCallOpen(true);
+            }}
+            onStartGroupVoiceChat={(c) => {
+              setGroupCallChat(c);
+              setIsGroupCallMinimized(false);
+              setIsGroupVoiceChatOpen(true);
             }}
             onOpenInviteModal={() => setIsInviteModalOpen(true)}
             onOpenEditChatModal={(c) => setChatToEdit(c)}
@@ -1663,28 +1709,70 @@ export const App: React.FC = () => {
 
       {/* Simulated & Real-time Voice Call Modal */}
       {isVoiceCallOpen && (
-        <VoiceCallModal
-          chat={callChat || activeChat}
-          targetUser={callTargetUser || (activeChat?.type === 'direct' ? activeChat.targetUser : null)}
-          currentUser={currentUser}
-          allUsers={allUsers}
-          socket={socketRef.current}
-          isIncomingAccepted={isIncomingAccepted}
-          onClose={() => {
+        <CallErrorBoundary
+          onForceEndCall={() => {
             setIsVoiceCallOpen(false);
             setIsIncomingAccepted(false);
+            setIsVoiceCallMinimized(false);
             setCallChat(null);
             setCallTargetUser(null);
           }}
-        />
+        >
+          <VoiceCallModal
+            chat={callChat || activeChat}
+            targetUser={callTargetUser || (activeChat?.type === 'direct' ? activeChat.targetUser : null)}
+            currentUser={currentUser}
+            allUsers={allUsers}
+            socket={socketRef.current}
+            isIncomingAccepted={isIncomingAccepted}
+            isMinimizedControlled={isVoiceCallMinimized}
+            onToggleMinimize={(min) => setIsVoiceCallMinimized(min)}
+            onClose={() => {
+              setIsVoiceCallOpen(false);
+              setIsIncomingAccepted(false);
+              setIsVoiceCallMinimized(false);
+              setCallChat(null);
+              setCallTargetUser(null);
+            }}
+          />
+        </CallErrorBoundary>
+      )}
+
+      {/* Group Voice Chat / Space Modal */}
+      {isGroupVoiceChatOpen && groupCallChat && (
+        <CallErrorBoundary
+          onForceEndCall={() => {
+            setIsGroupVoiceChatOpen(false);
+            setIsGroupCallMinimized(false);
+            setGroupCallChat(null);
+          }}
+        >
+          <GroupVoiceChatModal
+            isOpen={isGroupVoiceChatOpen}
+            chat={groupCallChat}
+            currentUser={currentUser}
+            allUsers={allUsers}
+            socket={socketRef.current}
+            isMinimizedControlled={isGroupCallMinimized}
+            onToggleMinimize={(min) => setIsGroupCallMinimized(min)}
+            onClose={() => {
+              setIsGroupVoiceChatOpen(false);
+              setIsGroupCallMinimized(false);
+              setGroupCallChat(null);
+            }}
+          />
+        </CallErrorBoundary>
       )}
 
       {/* Incoming Call Popup */}
       {incomingCall && (
         <IncomingCallModal
+          callerId={incomingCall.callerId}
           callerName={incomingCall.callerName}
           callerAvatar={incomingCall.callerAvatar}
           callerVerified={incomingCall.callerVerified}
+          chatId={incomingCall.chatId}
+          isVideo={incomingCall.isVideo}
           onAccept={() => {
             let targetChat = chats.find((c) => c.id === incomingCall.chatId);
             const callerObj = allUsers.find((u) => u.id === incomingCall.callerId);
@@ -1707,6 +1795,7 @@ export const App: React.FC = () => {
               setCallTargetUser(callerObj);
             }
             setIsIncomingAccepted(true);
+            setIsVoiceCallMinimized(false);
             setIsVoiceCallOpen(true);
             socketRef.current?.emit('call_accept', {
               callerId: incomingCall.callerId,

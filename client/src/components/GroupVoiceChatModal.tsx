@@ -32,8 +32,14 @@ import { ScreenSharePickerModal, DesktopSource } from './ScreenSharePickerModal'
 import {
   hasNativeAndroidScreenShare,
   startNativeAndroidScreenShare,
+  forceStopNativeAndroidScreenShare,
   MobileScreenShareSession,
 } from '../utils/mobileScreenShare';
+import {
+  updateActiveCallSystemNotification,
+  clearCallSystemNotifications,
+  onSystemCallAction,
+} from '../utils/notifications';
 
 export interface GroupParticipant {
   user: User;
@@ -47,6 +53,8 @@ interface GroupVoiceChatModalProps {
   currentUser: User | null;
   allUsers: User[];
   socket?: Socket | null;
+  isMinimizedControlled?: boolean;
+  onToggleMinimize?: (min: boolean) => void;
   onClose: () => void;
 }
 
@@ -56,6 +64,8 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   currentUser,
   allUsers,
   socket,
+  isMinimizedControlled,
+  onToggleMinimize,
   onClose,
 }) => {
   const [seconds, setSeconds] = useState(0);
@@ -71,7 +81,12 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   >([]);
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(null);
   const [isHandRaised, setIsHandRaised] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
+  const [localMinimized, setLocalMinimized] = useState(false);
+  const isMinimized = isMinimizedControlled !== undefined ? isMinimizedControlled : localMinimized;
+  const setMinimizedState = useCallback((min: boolean) => {
+    setLocalMinimized(min);
+    if (onToggleMinimize) onToggleMinimize(min);
+  }, [onToggleMinimize]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteSearchQuery, setInviteSearchQuery] = useState('');
@@ -155,7 +170,7 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
 
     setRoomParticipants([{ user: currentUser, status: 'active', isSpeaking: !isMuted }]);
     setSeconds(0);
-    setIsMinimized(false);
+    setMinimizedState(false);
     setIsInviteOpen(false);
     setInvitedUserIds(new Set());
 
@@ -470,7 +485,7 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   const startGroupScreenStream = async (screenStream: MediaStream, skipCanvasLoop = false) => {
     screenStreamRef.current = screenStream;
     setIsScreenSharing(true);
-    setIsMinimized(false);
+    setMinimizedState(false);
     setSelectedStreamId('local');
 
     if (screenVideoRef.current) {
@@ -678,8 +693,10 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   };
 
   // Leave room and stop streams
-  const handleLeaveRoom = (e?: React.MouseEvent) => {
+  const handleLeaveRoom = useCallback((e?: React.MouseEvent) => {
     e?.stopPropagation();
+    forceStopNativeAndroidScreenShare();
+    clearCallSystemNotifications();
     if (isScreenSharing) {
       stopScreenSharing();
     }
@@ -698,7 +715,75 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
       localStreamRef.current = null;
     }
     onClose();
-  };
+  }, [isScreenSharing, stopScreenSharing, onClose]);
+
+  // Guaranteed unmount cleanup
+  useEffect(() => {
+    return () => {
+      forceStopNativeAndroidScreenShare();
+      clearCallSystemNotifications();
+      if (frameIntervalRef.current) {
+        clearInterval(frameIntervalRef.current);
+        frameIntervalRef.current = null;
+      }
+      if (mobileScreenSessionRef.current) {
+        try {
+          mobileScreenSessionRef.current.stop();
+        } catch {}
+        mobileScreenSessionRef.current = null;
+      }
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
+        });
+        screenStreamRef.current = null;
+      }
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
+        });
+        localStreamRef.current = null;
+      }
+      if (effectCleanupRef.current) {
+        try {
+          effectCleanupRef.current();
+        } catch {}
+        effectCleanupRef.current = null;
+      }
+    };
+  }, []);
+
+  // Sync active OS notification
+  useEffect(() => {
+    if (isOpen && chat) {
+      updateActiveCallSystemNotification({
+        title: `🎙 ${chat.displayName || chat.name || 'Голосовой чат'}`,
+        body: isScreenSharing
+          ? '🖥️ Вы транслируете экран в голосовом чате'
+          : `Голосовой чат (${formatTime(seconds)})`,
+        isScreenSharing,
+        chatId: chat.id,
+      });
+    }
+  }, [isOpen, chat, isScreenSharing, seconds]);
+
+  // Handle system notification action
+  useEffect(() => {
+    const unsub = onSystemCallAction(({ action }) => {
+      if (action === 'hangup') {
+        handleLeaveRoom();
+      } else if (action === 'stop_screen') {
+        stopScreenSharing();
+      } else if (action === 'expand') {
+        setMinimizedState(false);
+      }
+    });
+    return unsub;
+  }, [handleLeaveRoom, stopScreenSharing, setMinimizedState]);
 
   if (!isOpen || !chat || !currentUser) return null;
 
@@ -723,7 +808,7 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   if (isMinimized) {
     return (
       <div
-        onClick={() => setIsMinimized(false)}
+        onClick={() => setMinimizedState(false)}
         style={{ zIndex: 9999 }}
         className="fixed top-3 left-1/2 -translate-x-1/2 bg-[#17212b]/95 hover:bg-[#202b36] border border-emerald-500/50 hover:border-emerald-400 backdrop-blur-md rounded-2xl px-4 py-2 shadow-2xl flex items-center gap-3.5 cursor-pointer transition-all duration-200 select-none group max-w-[95vw] animate-pop-in"
         title="Нажмите в любое место, чтобы вернуться в голосовой чат"
@@ -746,15 +831,30 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
             <span className="text-emerald-400 font-mono font-medium">{formatTime(seconds)}</span>
             <span className="text-[10px] text-[#7f91a4]">{roomParticipants.length} участн.</span>
             {isScreenSharing && (
-              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold border border-emerald-500/30">
+              <span className="flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-rose-500/20 text-rose-300 text-[10px] font-semibold border border-rose-500/30">
                 <Tv size={10} />
-                <span>Экран</span>
+                <span>Экран ВКЛ</span>
               </span>
             )}
           </div>
         </div>
 
         <div className="flex items-center gap-1.5 ml-2" onClick={(e) => e.stopPropagation()}>
+          {isScreenSharing && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                stopScreenSharing();
+              }}
+              className="px-2 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+              title="Остановить трансляцию экрана"
+            >
+              <MonitorUp size={13} />
+              <span className="hidden xs:inline">Выкл. экран</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={(e) => handleToggleMute(e)}
@@ -779,7 +879,7 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
 
           <button
             type="button"
-            onClick={() => setIsMinimized(false)}
+            onClick={() => setMinimizedState(false)}
             className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-md flex items-center gap-1 text-xs font-semibold cursor-pointer active:scale-95"
             title="Развернуть голосовой чат"
           >
@@ -916,7 +1016,7 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
             {/* Minimize Call */}
             <button
               type="button"
-              onClick={() => setIsMinimized(true)}
+              onClick={() => setMinimizedState(true)}
               className="p-1.5 rounded-lg bg-[#242f3d] hover:bg-[#2c394a] text-[#7f91a4] hover:text-white transition cursor-pointer flex items-center gap-1 text-xs"
               title="Свернуть звонок в плавающее окно"
             >
@@ -935,6 +1035,26 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Prominent Quick-Stop Badge when current user shares screen */}
+        {isScreenSharing && (
+          <div className="w-full mb-2 px-3 py-1.5 bg-rose-500/15 border border-rose-500/40 rounded-2xl flex items-center justify-between gap-2 animate-fade-in flex-shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping flex-shrink-0" />
+              <span className="text-xs font-bold text-rose-200 truncate">
+                Вы делитесь своим экраном — все участники видят ваш экран
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={stopScreenSharing}
+              className="px-3 py-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition shadow-md flex items-center gap-1 cursor-pointer flex-shrink-0 active:scale-95"
+            >
+              <MonitorUp size={13} />
+              <span>Выкл. экран</span>
+            </button>
+          </div>
+        )}
 
         {/* --- MAIN CONTENT: THEATER SCREEN SHARE OR PARTICIPANTS GRID --- */}
         <div className="flex-1 w-full min-h-0 flex flex-col relative overflow-hidden">

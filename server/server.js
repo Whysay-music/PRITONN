@@ -2065,14 +2065,14 @@ app.post('/api/messages/:id/transcribe', async (req, res) => {
 
 // App Version & In-App Updater Metadata Endpoint
 app.get('/api/app-version', (req, res) => {
-  let pkgVersion = '5.13.0';
+  let pkgVersion = '5.14.0';
   try {
     const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
     if (rootPkg && rootPkg.version) pkgVersion = rootPkg.version;
   } catch {}
   res.json({
     version: pkgVersion,
-    releaseNotes: 'PRITONN v' + pkgVersion + ' — Вечное сохранение аккаунтов при обновлениях, совместимость версий, точная серверная расшифровка речи и уведомление об обновлении в Настройках.',
+    releaseNotes: 'PRITONN v' + pkgVersion + ' — Стабильные звонки и демонстрация экрана без вылетов, виджет звонка во всех разделах, кнопки Принять/Сбросить в уведомлениях, запись войсов и кружков удержанием и обновлённый дизайн.',
     apkUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_v${pkgVersion}.apk`,
     winSetupUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_Setup_${pkgVersion}.exe`,
     releasePageUrl: 'https://github.com/Whysay-music/PRITONN/releases/latest',
@@ -2591,6 +2591,17 @@ io.on('connection', (socket) => {
       if (session) {
         session.participants.delete(userId);
       }
+      const roomShares = voiceRoomScreenShares.get(chatId);
+      if (roomShares && roomShares.has(userId)) {
+        roomShares.delete(userId);
+        const activeShares = Array.from(roomShares.values());
+        io.emit('voice_chat_screen_share_status', {
+          chatId,
+          isSharing: false,
+          sharerId: userId,
+          activeShares,
+        });
+      }
     }
     io.to(`voice_room_${chatId}`).emit('voice_chat_user_left', { chatId, userId });
     finishGroupVoiceChatIfEmpty(chatId, userId);
@@ -2602,6 +2613,15 @@ io.on('connection', (socket) => {
     const session = activeGroupVoiceChats.get(chatId);
     if (session) {
       session.participants.clear();
+    }
+    if (voiceRoomScreenShares.has(chatId)) {
+      voiceRoomScreenShares.delete(chatId);
+      io.emit('voice_chat_screen_share_status', {
+        chatId,
+        isSharing: false,
+        sharerId: userId || '',
+        activeShares: [],
+      });
     }
     io.to(`voice_room_${chatId}`).emit('voice_chat_ended', { chatId });
     finishGroupVoiceChatIfEmpty(chatId, userId);

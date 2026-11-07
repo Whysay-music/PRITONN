@@ -129,6 +129,7 @@ interface ChatAreaProps {
   onTriggerFullscreenEmoji?: (emoji: string) => void;
   onTranscribeVoice?: (messageId: string, transcribedText?: string) => void;
   onPlayGlobalAudio?: (track: { id: string; url: string; title: string; artist?: string }) => void;
+  onStartGroupVoiceChat?: (chat: Chat) => void;
   onBack?: () => void;
 }
 
@@ -180,6 +181,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onTriggerFullscreenEmoji,
   onTranscribeVoice,
   onPlayGlobalAudio,
+  onStartGroupVoiceChat,
   onBack,
 }) => {
   const [inputText, setInputText] = useState('');
@@ -271,6 +273,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isGroupVoiceChatOpen, setIsGroupVoiceChatOpen] = useState(false);
   const [mediaInputMode, setMediaInputMode] = useState<'voice' | 'round_video'>('voice');
   const [isSilentSend, setIsSilentSend] = useState(false);
+
+  // Telegram-style Tap to Switch & Hold to Record
+  const [mediaModeHint, setMediaModeHint] = useState<string | null>(null);
+  const pointerDownTimeRef = useRef<number>(0);
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isHoldingToRecordRef = useRef<boolean>(false);
+  const holdStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isSlideCancelling, setIsSlideCancelling] = useState<boolean>(false);
 
   // In-chat search & clipboard
   const [isSearchingChat, setIsSearchingChat] = useState(false);
@@ -681,6 +691,75 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     cleanupVoiceRecordingResources();
   };
 
+  const handleMediaButtonPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    pointerDownTimeRef.current = Date.now();
+    isHoldingToRecordRef.current = false;
+    setIsSlideCancelling(false);
+    holdStartPosRef.current = { x: e.clientX, y: e.clientY };
+
+    if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
+    holdTimerRef.current = setTimeout(() => {
+      isHoldingToRecordRef.current = true;
+      if (mediaInputMode === 'voice') {
+        handleStartVoiceRecording();
+      } else {
+        setIsVideoNoteRecorderOpen(true);
+      }
+    }, 210);
+  };
+
+  const handleMediaButtonPointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!isHoldingToRecordRef.current) return;
+    const diffX = holdStartPosRef.current.x - e.clientX;
+    if (diffX > 60) {
+      setIsSlideCancelling(true);
+    } else {
+      setIsSlideCancelling(false);
+    }
+  };
+
+  const handleMediaButtonPointerUp = () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    const elapsed = Date.now() - pointerDownTimeRef.current;
+    if (!isHoldingToRecordRef.current && elapsed < 210) {
+      // Single tap: toggle mode between voice and video note circle
+      const nextMode = mediaInputMode === 'voice' ? 'round_video' : 'voice';
+      setMediaInputMode(nextMode);
+      setMediaModeHint(
+        nextMode === 'voice'
+          ? 'Удерживайте для записи голоса'
+          : 'Удерживайте для записи кружка'
+      );
+      setTimeout(() => setMediaModeHint(null), 2200);
+      return;
+    }
+
+    if (isHoldingToRecordRef.current) {
+      if (isSlideCancelling) {
+        handleCancelVoiceRecording();
+      } else if (mediaInputMode === 'voice') {
+        handleFinishVoiceRecording();
+      }
+      isHoldingToRecordRef.current = false;
+      setIsSlideCancelling(false);
+    }
+  };
+
+  const handleMediaButtonPointerCancel = () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    if (isHoldingToRecordRef.current) {
+      handleCancelVoiceRecording();
+      isHoldingToRecordRef.current = false;
+      setIsSlideCancelling(false);
+    }
+  };
+
   // Telegram Video Note (Кружочек) sending
   const handleSendVideoNote = async (blob: Blob, duration: number, mimeType?: string) => {
     setIsUploadingMedia(true);
@@ -981,8 +1060,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           {(chat.type === 'group' || chat.type === 'channel') && (
             <button
               type="button"
-              onClick={() => setIsGroupVoiceChatOpen(true)}
-              className="p-2 rounded-xl text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition flex items-center gap-1.5 text-xs font-semibold"
+              onClick={() => {
+                if (onStartGroupVoiceChat) {
+                  onStartGroupVoiceChat(chat);
+                } else {
+                  setIsGroupVoiceChatOpen(true);
+                }
+              }}
+              className="p-2 rounded-xl text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer active:scale-95"
               title="Начать голосовой чат"
             >
               <Radio size={16} />
@@ -1221,7 +1306,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     </div>
                     <button
                       type="button"
-                      onClick={() => setIsGroupVoiceChatOpen(true)}
+                      onClick={() => {
+                        if (onStartGroupVoiceChat) onStartGroupVoiceChat(chat);
+                        else setIsGroupVoiceChatOpen(true);
+                      }}
                       className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold transition shadow-md shadow-emerald-500/25 active:scale-95 cursor-pointer flex items-center gap-1.5 flex-shrink-0"
                     >
                       <PhoneCall size={13} />
@@ -1251,8 +1339,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     </div>
                     <button
                       type="button"
-                      onClick={() => setIsGroupVoiceChatOpen(true)}
-                      className="px-3 py-1.5 rounded-xl bg-[#242f3d] hover:bg-[#2c394a] text-[#5288c1] text-xs font-semibold transition active:scale-95 cursor-pointer flex items-center gap-1 flex-shrink-0"
+                      onClick={() => {
+                        if (onStartGroupVoiceChat) onStartGroupVoiceChat(chat);
+                        else setIsGroupVoiceChatOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-[#2481cc] hover:bg-[#1e70b3] text-white text-xs font-semibold transition active:scale-95 cursor-pointer flex items-center gap-1 flex-shrink-0 shadow-sm"
                     >
                       <PhoneCall size={12} />
                       <span>Начать</span>
@@ -2222,13 +2313,22 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           )}
 
           {isRecordingVoice ? (
-            /* Real Microphone Voice Recording UI with Live Level Meter */
-            <div className="flex-1 flex items-center justify-between bg-rose-500/10 border border-rose-500/30 px-4 py-2.5 rounded-2xl">
-              <div className="flex items-center gap-2.5 text-rose-400 text-xs font-semibold">
+            /* Real Microphone Voice Recording UI with Live Level Meter & Slide-to-cancel */
+            <div
+              className={`flex-1 flex items-center justify-between px-4 py-2.5 rounded-2xl transition-all ${
+                isSlideCancelling
+                  ? 'bg-rose-600/30 border border-rose-500 text-rose-200'
+                  : 'bg-rose-500/10 border border-rose-500/30'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 text-rose-400 text-xs font-semibold min-w-0">
                 <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping flex-shrink-0" />
-                <span>
-                  Запись: {Math.floor(recordingSeconds / 60)}:
+                <span className="font-mono">
+                  {Math.floor(recordingSeconds / 60)}:
                   {(recordingSeconds % 60).toString().padStart(2, '0')}
+                </span>
+                <span className="text-[11px] font-normal text-rose-300/80 truncate hidden xs:inline">
+                  {isSlideCancelling ? 'Отпустите для отмены' : '← Проведите влево для отмены'}
                 </span>
                 <div className="hidden sm:flex items-center gap-0.5 h-4 ml-1">
                   {[0.4, 0.7, 1.0, 0.8, 0.5, 0.9, 0.6].map((mult, idx) => {
@@ -2243,11 +2343,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   })}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-shrink-0">
                 <button
                   type="button"
                   onClick={handleCancelVoiceRecording}
-                  className="text-xs text-[var(--tg-text-muted)] hover:text-white px-2 py-1 cursor-pointer"
+                  className="text-xs text-rose-300 hover:text-white px-2 py-1 cursor-pointer font-medium"
                 >
                   Отмена
                 </button>
@@ -2415,36 +2515,36 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="relative flex items-center flex-shrink-0">
+                <div className="relative flex items-center flex-shrink-0 select-none">
+                  {mediaModeHint && (
+                    <div className="absolute -top-10 right-0 bg-[#17212b]/95 text-sky-300 border border-sky-500/30 px-3 py-1 rounded-xl text-[11px] font-semibold whitespace-nowrap shadow-xl animate-fade-in pointer-events-none z-30">
+                      {mediaModeHint}
+                    </div>
+                  )}
+
                   <button
                     type="button"
-                    onClick={() => {
-                      if (mediaInputMode === 'voice') {
-                        handleStartVoiceRecording();
-                      } else {
-                        setIsVideoNoteRecorderOpen(true);
-                      }
-                    }}
-                    className="p-2.5 rounded-full text-[var(--tg-text-muted)] hover:text-[#5288c1] hover:bg-[var(--tg-surface-hover)] transition"
+                    onPointerDown={handleMediaButtonPointerDown}
+                    onPointerMove={handleMediaButtonPointerMove}
+                    onPointerUp={handleMediaButtonPointerUp}
+                    onPointerCancel={handleMediaButtonPointerCancel}
+                    className={`p-2.5 rounded-full transition transform active:scale-95 cursor-pointer touch-none select-none relative ${
+                      mediaInputMode === 'round_video'
+                        ? 'text-sky-400 hover:bg-sky-500/10'
+                        : 'text-[var(--tg-text-muted)] hover:text-[#5288c1] hover:bg-[var(--tg-surface-hover)]'
+                    }`}
                     title={
                       mediaInputMode === 'voice'
-                        ? 'Записать голосовое сообщение'
-                        : 'Записать видеосообщение в кружочке Telegram'
+                        ? 'Нажмите для кружочка • Зажмите для записи голоса'
+                        : 'Нажмите для микрофона • Зажмите для записи кружка'
                     }
                   >
                     {mediaInputMode === 'voice' ? <Mic size={20} /> : <Camera size={20} />}
-                  </button>
-
-                  {/* Mode switcher badge */}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setMediaInputMode(mediaInputMode === 'voice' ? 'round_video' : 'voice')
-                    }
-                    className="absolute -top-1 -right-1 text-[8px] bg-[#5288c1] hover:bg-[#6499d3] text-white px-1.5 py-0.2 rounded-full font-bold shadow-sm"
-                    title="Переключить: Войс / Кружочек"
-                  >
-                    {mediaInputMode === 'voice' ? 'МИК' : 'КРУГ'}
+                    <span
+                      className={`absolute top-1.5 right-1.5 w-2 h-2 rounded-full border border-[var(--tg-surface)] ${
+                        mediaInputMode === 'round_video' ? 'bg-sky-400' : 'bg-emerald-400'
+                      }`}
+                    />
                   </button>
                 </div>
               )}
@@ -2614,15 +2714,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         }}
       />
 
-      {/* Group Voice Chat / Space Modal */}
-      <GroupVoiceChatModal
-        isOpen={isGroupVoiceChatOpen}
-        chat={chat}
-        currentUser={currentUser}
-        allUsers={allUsers}
-        socket={socket}
-        onClose={() => setIsGroupVoiceChatOpen(false)}
-      />
+      {/* Group Voice Chat / Space Modal (fallback if not managed by root App) */}
+      {!onStartGroupVoiceChat && (
+        <GroupVoiceChatModal
+          isOpen={isGroupVoiceChatOpen}
+          chat={chat}
+          currentUser={currentUser}
+          allUsers={allUsers}
+          socket={socket}
+          onClose={() => setIsGroupVoiceChatOpen(false)}
+        />
+      )}
 
       {/* Stickers & GIF Picker */}
       <StickerGifPicker

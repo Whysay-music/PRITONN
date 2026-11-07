@@ -1,7 +1,7 @@
-export const DEFAULT_ONLINE_SERVER = 'https://beautiful-framed-thinking-eat.trycloudflare.com';
+export const DEFAULT_ONLINE_SERVER = 'https://pritonn-production.up.railway.app';
 
 export const getApiUrl = (): string => {
-  if (typeof window === 'undefined') return 'http://localhost:4000';
+  if (typeof window === 'undefined') return DEFAULT_ONLINE_SERVER;
 
   // 1. Check if user configured a custom server URL
   const savedServer = localStorage.getItem('pritonn_server_url');
@@ -9,7 +9,12 @@ export const getApiUrl = (): string => {
     return savedServer.trim().replace(/\/+$/, '');
   }
 
-  // 2. Detect mobile app (Capacitor Android / iOS)
+  // 2. When running Vite dev server locally during active development
+  if (window.location.hostname === 'localhost' && window.location.port === '3000') {
+    return 'http://localhost:4000';
+  }
+
+  // 3. Detect mobile app (Capacitor Android / iOS)
   const isCapacitor =
     (window as any).Capacitor !== undefined ||
     window.location.protocol === 'capacitor:' ||
@@ -19,17 +24,12 @@ export const getApiUrl = (): string => {
     return DEFAULT_ONLINE_SERVER;
   }
 
-  // 3. When running Vite dev server locally on PC
-  if (window.location.hostname === 'localhost' && window.location.port === '3000') {
-    return 'http://localhost:4000';
-  }
-
   // 4. When running inside Desktop Electron with file://
   if (window.location.protocol === 'file:') {
-    return 'http://localhost:4000';
+    return DEFAULT_ONLINE_SERVER;
   }
 
-  // 5. When running in a standard web browser on Cloudflare, Render, Railway, etc.
+  // 5. When running in a standard web browser on Railway, Render, etc.
   return window.location.origin;
 };
 

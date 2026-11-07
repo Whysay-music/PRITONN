@@ -1,8 +1,27 @@
 # 🟣 PRITONN Messenger & Social Platform
 
-Современная полнофункциональная платформа для общения в неоновом и Telegram-стиле с поддержкой десктопных приложений (Windows), мобильных (Android APK) и веб-клиента.
+Полнофункциональная социальная сеть и мессенджер в неоновом и Telegram-стиле.
+Доступна в вебе, как нативное мобильное приложение для Android и как десктопное приложение для Windows.
 
 ![PRITONN Logo](client/public/logo.jpg)
+
+---
+
+## 🌐 Официальный Онлайн-Хост:
+👉 **[https://pritonn-production.up.railway.app/](https://pritonn-production.up.railway.app/)**  
+*(Работает 24/7 в облаке Railway с поддержкой WebSockets, WebRTC звонков и демонстрации экрана)*
+
+---
+
+## 📥 Скачать приложения:
+
+### 📱 Android:
+- **Скачать APK**: [PRITONN_v5.8.5.apk](https://github.com/Whysay-music/PRITONN/releases/download/v5.8.5/PRITONN_v5.8.5.apk)
+- **Все релизы**: [GitHub Releases](https://github.com/Whysay-music/PRITONN/releases)
+
+### 🖥️ Windows:
+- **Установщик (Setup)**: `PC_INSTALLER/PRITONN_Setup_5.8.5.exe`
+- **Портативная версия (Portable)**: `PC_INSTALLER/PRITONN_Portable_5.8.5.exe`
 
 ---
 
@@ -22,54 +41,22 @@
 - **Папки чатов**: кастомные вкладки для сортировки чатов.
 - **Мини-приложения (Mini Apps)**: встроенные веб-приложения внутри чата.
 
-### 💻 Клиенты
-- **Web**: адаптивный интерфейс (PWA) для браузеров.
-- **Windows Desktop**: Electron-приложение с нативной рамкой и иконкой в трее.
-- **Android**: проект Capacitor с поддержкой разрешений на камеру, микрофон и звонки.
-
 ---
 
-## 🚀 Быстрый запуск
+## 🚀 Разработка и локальный запуск
 
-### 1. Веб-версия локально:
 ```bash
 # Установка зависимостей
 npm install
 cd client && npm install
 cd ../server && npm install
 
-# Запуск сервера
-cd ../server
-node server.js
+# Запуск бэкенда
+cd ../server && node server.js
+
+# Запуск фронтенда
+cd ../client && npm run dev
 ```
-
-### 2. Онлайн-хостинг (бесплатно в 1 клик):
-Запустите файл:
-```bat
-Запустить_Бесплатный_Онлайн_Хостинг.bat
-```
-Он активирует Cloudflare Tunnel и выдаст безопасную ссылку `https://...trycloudflare.com`, доступную из любой точки мира.
-
-### 3. Сборка Windows .exe:
-Запустите:
-```bat
-Собрать_Windows_Установщик.bat
-```
-
-### 4. Сборка Android APK:
-Запустите:
-```bat
-Android_Инструкция_и_Сборка.bat
-```
-
----
-
-## ☁️ Развертывание в облаке (Render / Railway / VPS)
-
-Проект полностью готов для хостинга:
-- В репозитории настроен `render.yaml`.
-- Вся статика клиента автоматически раздается Express-сервером (`server.js`).
-- Поддержка WebSocket и WebRTC на любом порту (`process.env.PORT`).
 
 ---
 

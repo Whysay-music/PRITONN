@@ -567,7 +567,9 @@ if (db.users) {
   } else {
     admin.password = "tixiy228";
     admin.verified = true;
-    admin.isPremium = true;
+    if (admin.isPremium === undefined) {
+      admin.isPremium = true;
+    }
     changed = true;
   }
 
@@ -973,6 +975,9 @@ app.put('/api/me', (req, res) => {
   const index = db.users.findIndex(u => u.id === currentUserId);
   if (index !== -1) {
     const updated = { ...db.users[index], ...req.body };
+    if (req.body.isPremium !== undefined) {
+      updated.isPremium = Boolean(req.body.isPremium);
+    }
     // Strictly enforce: ONLY user with username 'admin' has verified checkmark!
     updated.verified = updated.username?.toLowerCase() === 'admin';
     db.users[index] = updated;
@@ -1251,6 +1256,7 @@ app.post('/api/chats', (req, res) => {
     username: username ? username.trim() : '',
     avatar: avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=150',
     creatorId: currentUserId,
+    admins: [currentUserId],
     members,
     membersCount: members.length,
     subscribersCount: type === 'channel' ? members.length : undefined,
@@ -1573,10 +1579,10 @@ app.post('/api/messages/:id/pin', (req, res) => {
   }
 });
 
-// Edit chat (Name, Description, Avatar, Wallpaper)
+// Edit chat (Name, Description, Avatar, Wallpaper, Username/Tag)
 app.put('/api/chats/:chatId', (req, res) => {
   const { chatId } = req.params;
-  const { name, description, avatar, wallpaper, currentUserId } = req.body;
+  const { name, description, avatar, wallpaper, username, currentUserId } = req.body;
 
   const chat = db.chats.find(c => c.id === chatId);
   if (!chat) {
@@ -1587,9 +1593,21 @@ app.put('/api/chats/:chatId', (req, res) => {
     return res.status(403).json({ error: 'Access denied: not a member' });
   }
 
+  // If group or channel, check creator or admin rights
+  if (chat.type === 'group' || chat.type === 'channel') {
+    const isCreator = chat.creatorId === currentUserId || (!chat.creatorId && chat.members && chat.members[0] === currentUserId);
+    const isAdmin = isCreator || (Array.isArray(chat.admins) && chat.admins.includes(currentUserId));
+    if (currentUserId && !isAdmin) {
+      return res.status(403).json({ error: 'Только создатель или администратор может изменять параметры чата' });
+    }
+  }
+
   if (name && name.trim()) {
     chat.name = name.trim();
     chat.displayName = chat.name;
+  }
+  if (username !== undefined) {
+    chat.username = String(username).replace(/^@/, '').trim();
   }
   if (description !== undefined) {
     chat.description = description.trim();
@@ -1605,6 +1623,77 @@ app.put('/api/chats/:chatId', (req, res) => {
   saveData(db);
   io.emit('chat_updated', chat);
   res.json(chat);
+});
+
+// Kick / Remove member from chat
+app.post('/api/chats/:chatId/kick', (req, res) => {
+  const { chatId } = req.params;
+  const { currentUserId, targetUserId } = req.body;
+
+  const chat = db.chats.find(c => c.id === chatId);
+  if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+  const isCreator = chat.creatorId === currentUserId || (!chat.creatorId && chat.members && chat.members[0] === currentUserId);
+  const isAdmin = isCreator || (Array.isArray(chat.admins) && chat.admins.includes(currentUserId));
+
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Только создатель или администратор может удалять участников' });
+  }
+
+  if (targetUserId === chat.creatorId) {
+    return res.status(400).json({ error: 'Нельзя исключить создателя чата' });
+  }
+
+  if (!isCreator && Array.isArray(chat.admins) && chat.admins.includes(targetUserId)) {
+    return res.status(403).json({ error: 'Администратор не может исключить другого администратора' });
+  }
+
+  chat.members = (chat.members || []).filter(id => id !== targetUserId);
+  if (chat.admins) {
+    chat.admins = chat.admins.filter(id => id !== targetUserId);
+  }
+  chat.membersCount = chat.members.length;
+  if (chat.type === 'channel') {
+    chat.subscribersCount = chat.members.length;
+  }
+
+  saveData(db);
+  io.emit('chat_updated', chat);
+  io.emit('chat_member_kicked', { chatId, userId: targetUserId });
+  res.json({ success: true, chat });
+});
+
+// Promote or demote chat admin (Creator only)
+app.post('/api/chats/:chatId/admins', (req, res) => {
+  const { chatId } = req.params;
+  const { currentUserId, targetUserId, action } = req.body;
+
+  const chat = db.chats.find(c => c.id === chatId);
+  if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+  const isCreator = chat.creatorId === currentUserId || (!chat.creatorId && chat.members && chat.members[0] === currentUserId);
+  if (!isCreator) {
+    return res.status(403).json({ error: 'Только создатель чата может назначать или снимать администраторов' });
+  }
+
+  if (!Array.isArray(chat.admins)) {
+    chat.admins = chat.creatorId ? [chat.creatorId] : [];
+  }
+
+  if (action === 'promote') {
+    if (!chat.admins.includes(targetUserId)) {
+      chat.admins.push(targetUserId);
+    }
+  } else if (action === 'demote') {
+    if (targetUserId === chat.creatorId) {
+      return res.status(400).json({ error: 'Нельзя снять права у создателя чата' });
+    }
+    chat.admins = chat.admins.filter(id => id !== targetUserId);
+  }
+
+  saveData(db);
+  io.emit('chat_updated', chat);
+  res.json({ success: true, chat });
 });
 
 // Block user
@@ -2133,7 +2222,7 @@ app.get('/api/app-version', (req, res) => {
   } catch {}
   res.json({
     version: pkgVersion,
-    releaseNotes: 'PRITONN v' + pkgVersion + ' — Истории (Stories 24ч) с реакциями, обложки и эмодзи-статусы профиля, конструктор стикеров (Sticker Maker), Mini App Кликер PRITONN Coin, прямые трансляции в каналах (Live Streams), встроенный редактор фото перед отправкой.',
+    releaseNotes: 'PRITONN v' + pkgVersion + ' — Контекстное меню сообщений со статусом доставки и прочтения, исправление дублирования историй, права создателя чата (смена названия и тега, исключение участников, назначение админов), сохранение отключенного Premium.',
     apkUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_v${pkgVersion}.apk`,
     winSetupUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_Setup_${pkgVersion}.exe`,
     releasePageUrl: 'https://github.com/Whysay-music/PRITONN/releases/latest',

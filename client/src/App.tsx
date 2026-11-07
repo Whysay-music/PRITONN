@@ -503,8 +503,18 @@ export const App: React.FC = () => {
       }
     });
 
+    socket.on('chat_member_kicked', ({ chatId, userId }: { chatId: string; userId: string }) => {
+      if (currentUserRef.current?.id === userId) {
+        setChats((prev) => prev.filter((c) => c.id !== chatId));
+        setActiveChat((curr) => (curr && curr.id === chatId ? null : curr));
+        setIsInfoDrawerOpen(false);
+      }
+    });
+
     socket.on('chat_updated', (updatedChat: Chat) => {
       if (currentUserRef.current && updatedChat.members && !updatedChat.members.includes(currentUserRef.current.id)) {
+        setChats((prev) => prev.filter((c) => c.id !== updatedChat.id));
+        setActiveChat((curr) => (curr && curr.id === updatedChat.id ? null : curr));
         return;
       }
       const formatted = {
@@ -575,7 +585,10 @@ export const App: React.FC = () => {
     });
 
     socket.on('new_story', (story: Story) => {
-      setStories((prev) => [story, ...prev]);
+      setStories((prev) => {
+        if (prev.some((s) => s.id === story.id)) return prev;
+        return [story, ...prev];
+      });
     });
 
     socket.on('user_registered', (newUser: User) => {
@@ -792,12 +805,15 @@ export const App: React.FC = () => {
       const allU = await allUsersRes.json();
       const chs = await chatsRes.json();
       const sts = await storiesRes.json();
+      const uniqueStories = Array.isArray(sts)
+        ? sts.filter((s, idx, arr) => arr.findIndex((x) => x.id === s.id) === idx)
+        : [];
 
       writeSavedAccountVault(user);
       setCurrentUser(user);
       setAllUsers(allU);
       setChats(chs);
-      setStories(sts);
+      setStories(uniqueStories);
 
       const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
       if (chs.length > 0 && !activeChat && !isMobile) {
@@ -1130,8 +1146,8 @@ export const App: React.FC = () => {
     }
   };
 
-  // Edit Chat details (Name, description, avatar)
-  const handleSaveChat = async (chatId: string, updated: { name: string; description: string; avatar: string }) => {
+  // Edit Chat details (Name, username/tag, description, avatar)
+  const handleSaveChat = async (chatId: string, updated: { name: string; username?: string; description: string; avatar: string }) => {
     if (!currentUser) return;
     try {
       const res = await fetch(`${API_BASE_URL}/api/chats/${chatId}`, {
@@ -1142,11 +1158,17 @@ export const App: React.FC = () => {
           currentUserId: currentUser.id,
         }),
       });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || 'Ошибка при сохранении чата');
+        return;
+      }
       const newChat = await res.json();
       const formatted = {
         ...newChat,
         name: newChat.name,
         displayName: newChat.name,
+        username: newChat.username,
         avatar: newChat.avatar,
         displayAvatar: newChat.avatar,
         description: newChat.description,
@@ -1157,6 +1179,65 @@ export const App: React.FC = () => {
       );
     } catch (err) {
       console.error('Error updating chat:', err);
+    }
+  };
+
+  // Kick member from chat
+  const handleKickMember = async (chatId: string, memberId: string) => {
+    if (!currentUser) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/chats/${chatId}/kick`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentUserId: currentUser.id,
+          targetUserId: memberId,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.chat) {
+          setChats((prev) => prev.map((c) => (c.id === chatId ? { ...c, ...data.chat } : c)));
+          if (activeChat?.id === chatId) {
+            setActiveChat((curr) => (curr ? { ...curr, ...data.chat } : curr));
+          }
+        }
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Ошибка при исключении участника');
+      }
+    } catch (err) {
+      console.error('Error kicking member:', err);
+    }
+  };
+
+  // Promote or demote chat admin
+  const handleToggleAdmin = async (chatId: string, memberId: string, action: 'promote' | 'demote') => {
+    if (!currentUser) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/chats/${chatId}/admins`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentUserId: currentUser.id,
+          targetUserId: memberId,
+          action,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.chat) {
+          setChats((prev) => prev.map((c) => (c.id === chatId ? { ...c, ...data.chat } : c)));
+          if (activeChat?.id === chatId) {
+            setActiveChat((curr) => (curr ? { ...curr, ...data.chat } : curr));
+          }
+        }
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Ошибка при изменении прав администратора');
+      }
+    } catch (err) {
+      console.error('Error toggling admin:', err);
     }
   };
 
@@ -1710,6 +1791,8 @@ export const App: React.FC = () => {
           onSelectUserChat={(u) => handleStartDirectChat(u)}
           onOpenInviteModal={() => setIsInviteModalOpen(true)}
           onOpenEditChatModal={(c) => setChatToEdit(c)}
+          onKickMember={handleKickMember}
+          onToggleAdmin={handleToggleAdmin}
           isBlocked={isTargetBlocked}
           onToggleBlockUser={handleToggleBlockUser}
           onRequestDeleteChat={(c) => setChatToDelete(c)}
@@ -1759,7 +1842,10 @@ export const App: React.FC = () => {
         currentUser={currentUser}
         onClose={() => setIsCreateStoryOpen(false)}
         onStoryCreated={(newStory) => {
-          setStories((prev) => [newStory, ...prev]);
+          setStories((prev) => {
+            if (prev.some((s) => s.id === newStory.id)) return prev;
+            return [newStory, ...prev];
+          });
           setIsCreateStoryOpen(false);
         }}
       />

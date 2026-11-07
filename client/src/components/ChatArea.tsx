@@ -220,6 +220,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
 
+  const isChatCreator = chat && currentUser ? (chat.creatorId === currentUser.id || (!chat.creatorId && chat.members && chat.members[0] === currentUser.id)) : false;
+  const isChatAdmin = isChatCreator || (chat && currentUser ? (Array.isArray(chat.admins) && chat.admins.includes(currentUser.id)) : false);
+
   // Message Translation State
   const [translatedMessages, setTranslatedMessages] = useState<Record<string, string>>({});
   const [translatingIds, setTranslatingIds] = useState<Set<string>>(new Set());
@@ -1140,12 +1143,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             <ImageIcon size={18} />
           </button>
 
-          {/* Quick Edit Chat button (Name & Photo) */}
-          {(chat.type === 'group' || chat.type === 'channel') && onOpenEditChatModal && (
+          {/* Quick Edit Chat button (Name, Username/Tag & Photo) - only for creator or admin */}
+          {(chat.type === 'group' || chat.type === 'channel') && onOpenEditChatModal && isChatAdmin && (
             <button
               onClick={() => onOpenEditChatModal(chat)}
               className="p-2 rounded-xl text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 transition"
-              title="Редактировать чат (название и аватарку)"
+              title="Редактировать чат (название, тег и аватарку)"
             >
               <Edit3 size={18} />
             </button>
@@ -1256,7 +1259,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     <span>Поиск сообщений</span>
                   </button>
 
-                  {(chat.type === 'group' || chat.type === 'channel') && onOpenEditChatModal && (
+                  {(chat.type === 'group' || chat.type === 'channel') && onOpenEditChatModal && isChatAdmin && (
                     <button
                       onClick={() => {
                         setIsHeaderMenuOpen(false);
@@ -1683,7 +1686,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     e.stopPropagation();
                     onReactMessage(msg.id, '❤️');
                   }}
-                  title="Двойной клик — поставить сердечко ❤️"
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setContextMenu({ x: e.clientX, y: e.clientY, message: msg });
+                  }}
+                  title="Двойной клик — поставить сердечко ❤️ • ПКМ — меню сообщения"
                   className={`max-w-[85%] md:max-w-[70%] lg:max-w-[60%] rounded-2xl p-2.5 shadow-sm relative transition-all cursor-default select-text ${
                     isOutgoing
                       ? 'bg-[var(--tg-bubble-out)] text-[var(--tg-bubble-out-text)] rounded-br-none shadow-[0_1px_2px_rgba(0,0,0,0.1)] border border-white/5'
@@ -1745,6 +1753,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       src={resolveMediaUrl(msg.mediaUrl)}
                       duration={msg.videoDuration}
                       isOutgoing={isOutgoing}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setContextMenu({ x: e.clientX, y: e.clientY, message: msg });
+                      }}
                     />
                   </div>
                 )}
@@ -2054,6 +2067,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     isOutgoing={isOutgoing}
                     transcribedText={msg.transcribedText}
                     onSaveTranscription={(text) => onTranscribeVoice && onTranscribeVoice(msg.id, text)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setContextMenu({ x: e.clientX, y: e.clientY, message: msg });
+                    }}
                   />
                 ) : msg.isDice ? (
                   <div className="py-1">
@@ -2833,82 +2851,80 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               top: Math.min(contextMenu.y, window.innerHeight - 340),
               left: Math.min(contextMenu.x, window.innerWidth - 270),
             }}
-            className="fixed z-50 w-64 max-w-[92vw] bg-[var(--tg-surface)] text-[var(--tg-text)] rounded-2xl shadow-2xl border border-[var(--tg-card-border)] p-2 flex flex-col gap-1 animate-pop-in text-xs select-none backdrop-blur-xl"
+            className="fixed z-50 w-64 max-w-[92vw] bg-[#1c1c2e]/95 dark:bg-[#18222d]/95 text-[var(--tg-text)] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] border border-indigo-500/20 dark:border-white/10 p-2 flex flex-col gap-0.5 animate-pop-in text-xs select-none backdrop-blur-2xl"
           >
             {/* Read Receipt & Delivery Status Card */}
-            <div className="p-2.5 rounded-xl bg-[var(--tg-surface-hover)] border border-[var(--tg-card-border)] mb-1 flex flex-col gap-1">
-              {contextMenu.message.senderId === currentUser.id ? (
-                <>
-                  <div className="flex items-center gap-1.5 font-semibold">
-                    {contextMenu.message.status === 'read' ? (
+            <div className="p-3 rounded-xl bg-white/[0.04] border border-white/[0.08] mb-1.5 flex flex-col gap-1.5 shadow-sm">
+              <div className="flex items-center gap-2 font-semibold text-[var(--tg-text)] text-xs">
+                <Clock size={13} className="text-[#5288c1] flex-shrink-0" />
+                <span>Отправлено: в {formatExactReadTime(contextMenu.message.timestamp)}</span>
+              </div>
+
+              <div className="flex items-center gap-2 text-[11px] text-[var(--tg-text-muted)] pl-5">
+                {chat.type === 'saved' ? (
+                  <>
+                    <Eye size={12} className="text-emerald-400 flex-shrink-0" />
+                    <span className="text-emerald-400 font-medium">Просмотрено вами</span>
+                  </>
+                ) : contextMenu.message.senderId === currentUser.id ? (
+                  chat.type === 'channel' ? (
+                    <>
+                      <Eye size={12} className="text-emerald-400 flex-shrink-0" />
+                      <span>{contextMenu.message.views || 1} просмотров в канале</span>
+                    </>
+                  ) : chat.type === 'group' ? (
+                    contextMenu.message.readBy && contextMenu.message.readBy.length > 0 ? (
                       <>
-                        <CheckCheck size={14} className="text-[#5288c1] flex-shrink-0" />
-                        <span className="text-[#5288c1]">Прочитано</span>
+                        <CheckCheck size={13} className="text-[#5288c1] flex-shrink-0" />
+                        <span className="text-[#5288c1] font-medium">
+                          Прочитали: {contextMenu.message.readBy.length} {contextMenu.message.readBy.length === 1 ? 'участник' : 'участников'}
+                        </span>
                       </>
                     ) : (
                       <>
-                        <Check size={14} className="text-[var(--tg-text-muted)] flex-shrink-0" />
-                        <span className="text-[var(--tg-text-muted)]">Доставлено (не прочитано)</span>
+                        <Check size={13} className="text-[var(--tg-text-muted)] flex-shrink-0" />
+                        <span>Доставлено в группу</span>
                       </>
-                    )}
-                  </div>
-
-                  {contextMenu.message.status === 'read' ? (
-                    <div className="text-[11px] text-[var(--tg-text)] flex items-center gap-1.5 pl-5">
-                      <Eye size={12} className="text-[#5288c1] flex-shrink-0" />
-                      <span>
-                        Прочитано в{' '}
-                        <strong className="text-[#5288c1] font-bold">
-                          {formatExactReadTime(contextMenu.message.readAt || (contextMenu.message.timestamp + 35000))}
-                        </strong>
+                    )
+                  ) : contextMenu.message.status === 'read' ? (
+                    <>
+                      <Eye size={12} className="text-emerald-400 flex-shrink-0" />
+                      <span className="text-emerald-400 font-medium">
+                        Прочитано: в {formatExactReadTime(contextMenu.message.readAt || (contextMenu.message.timestamp + 35000))}
                       </span>
-                    </div>
+                    </>
                   ) : (
-                    <div className="text-[10px] text-[var(--tg-text-muted)] flex items-center gap-1.5 pl-5">
+                    <>
+                      <Check size={13} className="text-[var(--tg-text-muted)] flex-shrink-0" />
                       <span>Собеседник ещё не открыл диалог</span>
-                    </div>
-                  )}
+                    </>
+                  )
+                ) : (
+                  <>
+                    <Eye size={12} className="text-emerald-400 flex-shrink-0" />
+                    <span className="text-emerald-400 font-medium">Просмотрено вами</span>
+                  </>
+                )}
+              </div>
 
-                  {/* Multi-member group read info */}
-                  {contextMenu.message.readBy && contextMenu.message.readBy.length > 0 && chat.type === 'group' && (
-                    <div className="mt-1 pt-1 border-t border-[var(--tg-card-border)] flex flex-col gap-0.5 text-[10px]">
-                      <span className="text-[var(--tg-text-muted)] font-medium">
-                        Прочитали ({contextMenu.message.readBy.length}):
-                      </span>
-                      {contextMenu.message.readBy.slice(0, 3).map((r, i) => (
-                        <div key={i} className="flex items-center justify-between text-[10px]">
-                          <span className="truncate max-w-[130px]">{r.userName || 'Участник'}</span>
-                          <span className="text-[#5288c1] font-semibold">{formatExactReadTime(r.timestamp)}</span>
-                        </div>
-                      ))}
+              {/* Multi-member group read info */}
+              {contextMenu.message.readBy && contextMenu.message.readBy.length > 0 && chat.type === 'group' && (
+                <div className="mt-1 pt-1.5 border-t border-white/[0.08] flex flex-col gap-0.5 text-[10px]">
+                  <span className="text-[var(--tg-text-muted)] font-medium">
+                    Прочитали ({contextMenu.message.readBy.length}):
+                  </span>
+                  {contextMenu.message.readBy.slice(0, 3).map((r, i) => (
+                    <div key={i} className="flex items-center justify-between text-[10px]">
+                      <span className="truncate max-w-[130px]">{r.userName || 'Участник'}</span>
+                      <span className="text-[#5288c1] font-semibold">{formatExactReadTime(r.timestamp)}</span>
                     </div>
-                  )}
-
-                  <div className="text-[10px] text-[var(--tg-text-muted)] flex items-center gap-1.5 pl-5 pt-0.5">
-                    <Clock size={11} className="flex-shrink-0" />
-                    <span>Отправлено {formatExactReadTime(contextMenu.message.timestamp)}</span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center gap-1.5 font-semibold text-[var(--tg-text)]">
-                    <Clock size={12} className="text-[#5288c1] flex-shrink-0" />
-                    <span>Отправлено: {formatExactReadTime(contextMenu.message.timestamp)}</span>
-                  </div>
-                  <div className="text-[10px] text-[var(--tg-text-muted)] flex items-center gap-1.5 pl-4">
-                    <Eye size={11} className="text-emerald-400 flex-shrink-0" />
-                    <span>
-                      {contextMenu.message.readAt
-                        ? `Прочитано вами ${formatExactReadTime(contextMenu.message.readAt)}`
-                        : 'Просмотрено вами'}
-                    </span>
-                  </div>
-                </>
+                  ))}
+                </div>
               )}
             </div>
 
             {/* Quick Emoji Reactions */}
-            <div className="flex items-center justify-between px-2 py-1.5 border-b border-[var(--tg-card-border)] mb-0.5">
+            <div className="flex items-center justify-between px-2 py-1.5 border-b border-white/[0.08] mb-1">
               {['👍', '❤️', '🔥', '😂', '👏', '🎉'].map((em) => (
                 <button
                   key={em}
@@ -2916,7 +2932,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     onReactMessage(contextMenu.message.id, em);
                     setContextMenu(null);
                   }}
-                  className="hover:scale-125 transition text-base"
+                  className="hover:scale-125 transition text-base p-1 active:scale-95"
                 >
                   {em}
                 </button>
@@ -2928,9 +2944,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 setReplyingTo(contextMenu.message);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--tg-surface-hover)] transition text-left cursor-pointer"
+              className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/[0.08] transition text-left cursor-pointer text-xs"
             >
-              <Reply size={14} className="text-[#5288c1]" />
+              <Reply size={15} className="text-[#5288c1]" />
               <span>Ответить</span>
             </button>
 
@@ -2943,9 +2959,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   setContextMenu(null);
                   textareaRef.current?.focus();
                 }}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--tg-surface-hover)] transition text-left cursor-pointer"
+                className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/[0.08] transition text-left cursor-pointer text-xs"
               >
-                <Edit3 size={14} className="text-[#5288c1]" />
+                <Edit3 size={15} className="text-[#5288c1]" />
                 <span>Изменить</span>
               </button>
             )}
@@ -2956,9 +2972,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 setForwardingMessage(contextMenu.message);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--tg-surface-hover)] transition text-left cursor-pointer"
+              className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/[0.08] transition text-left cursor-pointer text-xs"
             >
-              <Forward size={14} className="text-[#5288c1]" />
+              <Forward size={15} className="text-[#5288c1]" />
               <span>Переслать</span>
             </button>
 
@@ -2968,9 +2984,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   handleCopyText(contextMenu.message.text, contextMenu.message.id);
                   setContextMenu(null);
                 }}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--tg-surface-hover)] transition text-left cursor-pointer"
+                className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/[0.08] transition text-left cursor-pointer text-xs"
               >
-                <Copy size={14} className="text-[#5288c1]" />
+                <Copy size={15} className="text-[#5288c1]" />
                 <span>Копировать текст</span>
               </button>
             )}
@@ -2982,9 +2998,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   handleTranslateMessage(contextMenu.message);
                   setContextMenu(null);
                 }}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--tg-surface-hover)] transition text-left cursor-pointer text-amber-300"
+                className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/[0.08] transition text-left cursor-pointer text-amber-300 text-xs"
               >
-                <Languages size={14} className="text-amber-400" />
+                <Languages size={15} className="text-amber-400" />
                 <span>{translatedMessages[contextMenu.message.id] ? 'Скрыть перевод' : 'Перевести сообщение'}</span>
               </button>
             )}
@@ -2994,24 +3010,24 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 onPinMessage(contextMenu.message.id);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--tg-surface-hover)] transition text-left cursor-pointer"
+              className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/[0.08] transition text-left cursor-pointer text-xs"
             >
-              <Pin size={14} className="text-[#5288c1]" />
+              <Pin size={15} className="text-[#5288c1]" />
               <span>
                 {chat.pinnedMessageId === contextMenu.message.id ? 'Открепить' : 'Закрепить'}
               </span>
             </button>
 
-            <div className="h-px bg-[var(--tg-border)] my-0.5" />
+            <div className="h-px bg-white/[0.08] my-1" />
 
             <button
               onClick={() => {
                 onDeleteMessage(contextMenu.message);
                 setContextMenu(null);
               }}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-rose-600/20 text-rose-500 transition text-left cursor-pointer"
+              className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-rose-500/15 text-rose-400 transition text-left cursor-pointer text-xs"
             >
-              <Trash2 size={14} />
+              <Trash2 size={15} className="text-rose-400" />
               <span>Удалить сообщение</span>
             </button>
           </div>

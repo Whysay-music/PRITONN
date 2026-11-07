@@ -9,7 +9,10 @@ import {
   Mic,
   Users,
   UserPlus,
+  UserMinus,
   ShieldCheck,
+  ShieldAlert,
+  Crown,
   CheckCircle,
   Edit3,
   Camera,
@@ -38,6 +41,8 @@ interface ChatInfoDrawerProps {
   onSelectUserChat?: (user: User) => void;
   onOpenInviteModal?: (chat: Chat) => void;
   onOpenEditChatModal?: (chat: Chat) => void;
+  onKickMember?: (chatId: string, memberId: string) => void;
+  onToggleAdmin?: (chatId: string, memberId: string, action: 'promote' | 'demote') => void;
   isBlocked?: boolean;
   onToggleBlockUser?: () => void;
   onRequestDeleteChat?: (chat: Chat) => void;
@@ -54,6 +59,8 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
   onSelectUserChat,
   onOpenInviteModal,
   onOpenEditChatModal,
+  onKickMember,
+  onToggleAdmin,
   isBlocked,
   onToggleBlockUser,
   onRequestDeleteChat,
@@ -74,6 +81,11 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
   const targetUser = isDirect
     ? (otherUserId ? allUsers.find((u) => u.id === otherUserId) : null) || chat.targetUser
     : null;
+
+  const isCreator = currentUser
+    ? chat.creatorId === currentUser.id || (!chat.creatorId && chat.members && chat.members[0] === currentUser.id)
+    : false;
+  const isAdmin = isCreator || (currentUser ? (Array.isArray(chat.admins) && chat.admins.includes(currentUser.id)) : false);
 
   const displayName = isSaved
     ? 'Избранное'
@@ -102,11 +114,11 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
       <div className="flex items-center justify-between p-3.5 border-b border-[var(--tg-border)]">
         <h3 className="font-semibold text-sm">Информация</h3>
         <div className="flex items-center gap-1">
-          {onOpenEditChatModal && (chat.type === 'group' || chat.type === 'channel') && (
+          {onOpenEditChatModal && isAdmin && (chat.type === 'group' || chat.type === 'channel') && (
             <button
               onClick={() => onOpenEditChatModal(chat)}
               className="text-blue-400 hover:text-blue-300 p-1.5 rounded-full hover:bg-[var(--tg-surface-hover)] transition"
-              title="Редактировать чат (название и фото)"
+              title="Редактировать чат (название, тег и фото)"
             >
               <Edit3 size={17} />
             </button>
@@ -134,9 +146,9 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
         {/* Profile Card */}
         <div className="flex flex-col items-center px-6 pb-6 pt-0 border-b border-[var(--tg-border)] -mt-12 relative z-10">
           <div
-            onClick={() => onOpenEditChatModal && (chat.type === 'group' || chat.type === 'channel') && onOpenEditChatModal(chat)}
-            className={`relative mb-2 ${onOpenEditChatModal && (chat.type === 'group' || chat.type === 'channel') ? 'cursor-pointer group' : ''}`}
-            title="Нажмите для смены фото чата"
+            onClick={() => onOpenEditChatModal && isAdmin && (chat.type === 'group' || chat.type === 'channel') && onOpenEditChatModal(chat)}
+            className={`relative mb-2 ${onOpenEditChatModal && isAdmin && (chat.type === 'group' || chat.type === 'channel') ? 'cursor-pointer group' : ''}`}
+            title={isAdmin ? "Нажмите для смены фото чата" : undefined}
           >
             <img
               src={getAvatarUrl(displayAvatar, displayName)}
@@ -144,7 +156,7 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
               alt={displayName}
               className="w-24 h-24 rounded-full object-cover border-4 border-[var(--tg-sidebar)] shadow-xl group-hover:brightness-90 transition"
             />
-            {onOpenEditChatModal && (chat.type === 'group' || chat.type === 'channel') && (
+            {onOpenEditChatModal && isAdmin && (chat.type === 'group' || chat.type === 'channel') && (
               <div className="absolute inset-0 rounded-full bg-black/35 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition">
                 <Camera size={24} />
               </div>
@@ -217,7 +229,7 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
           )}
 
           {/* Group Forum / Topics Toggle */}
-          {chat.type === 'group' && onOpenEditChatModal && (
+          {chat.type === 'group' && onOpenEditChatModal && isAdmin && (
             <div className="flex items-center gap-2 mt-3">
               <button
                 type="button"
@@ -427,57 +439,115 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
               )}
 
               <div className="flex flex-col gap-1">
-                {memberUsers.map((u) => (
-                  <div
-                    key={u.id}
-                    onClick={() => onSelectUserChat && onSelectUserChat(u)}
-                    className="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--tg-surface-hover)] cursor-pointer transition"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <img
-                        src={getAvatarUrl(u.avatar, u.name)}
-                        onError={(e) => handleAvatarError(e, u.name)}
-                        alt={u.name}
-                        className="w-8 h-8 rounded-full object-cover"
-                      />
-                      <div>
-                        <div className="text-xs font-semibold flex items-center gap-1">
-                          <span>{u.name}</span>
-                          {isUserVerified(u) && <TelegramVerifiedBadge size={13} />}
-                        </div>
-                        <div className="text-[10px]">
-                          {u.online ? (
-                            <span className="text-[#5288c1] font-medium">в сети</span>
-                          ) : (
-                            <span className="text-[var(--tg-text-muted)]">
-                              {u.lastSeen || 'был(а) недавно'}
-                            </span>
-                          )}
+                {memberUsers.map((u) => {
+                  const isThisCreator = u.id === chat.creatorId || (!chat.creatorId && chat.members && chat.members[0] === u.id);
+                  const isThisAdmin = isThisCreator || (Array.isArray(chat.admins) && chat.admins.includes(u.id));
+                  const isSelf = currentUser && u.id === currentUser.id;
+
+                  return (
+                    <div
+                      key={u.id}
+                      onClick={() => onSelectUserChat && onSelectUserChat(u)}
+                      className="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--tg-surface-hover)] cursor-pointer transition"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <img
+                          src={getAvatarUrl(u.avatar, u.name)}
+                          onError={(e) => handleAvatarError(e, u.name)}
+                          alt={u.name}
+                          className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold flex items-center gap-1 truncate">
+                            <span className="truncate">{u.name}</span>
+                            {isUserVerified(u) && <TelegramVerifiedBadge size={13} />}
+                          </div>
+                          <div className="text-[10px]">
+                            {u.online ? (
+                              <span className="text-[#5288c1] font-medium">в сети</span>
+                            ) : (
+                              <span className="text-[var(--tg-text-muted)]">
+                                {u.lastSeen || 'был(а) недавно'}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
+
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {isThisCreator ? (
+                          <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded font-semibold flex items-center gap-1 shadow-sm">
+                            <Crown size={11} className="text-amber-400" /> Владелец
+                          </span>
+                        ) : isThisAdmin ? (
+                          <span className="text-[10px] text-blue-400 bg-blue-500/10 border border-blue-500/30 px-1.5 py-0.5 rounded font-semibold flex items-center gap-1">
+                            <ShieldCheck size={11} /> Админ
+                          </span>
+                        ) : null}
+
+                        {/* Creator Controls: Promote / Demote Admin */}
+                        {isCreator && !isSelf && (
+                          isThisAdmin ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleAdmin && onToggleAdmin(chat.id, u.id, 'demote');
+                              }}
+                              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-700/50 hover:bg-zinc-700 text-zinc-300 border border-zinc-600/40 transition cursor-pointer"
+                              title="Снять права администратора"
+                            >
+                              -Админ
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleAdmin && onToggleAdmin(chat.id, u.id, 'promote');
+                              }}
+                              className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 hover:bg-blue-500/30 text-blue-400 border border-blue-500/30 transition cursor-pointer"
+                              title="Назначить администратором"
+                            >
+                              +Админ
+                            </button>
+                          )
+                        )}
+
+                        {/* Kick member button: Creator can kick anyone except self; Admin can kick non-admins */}
+                        {((isCreator && !isSelf) || (isAdmin && !isCreator && !isSelf && !isThisCreator && !isThisAdmin)) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Выгнать пользователя ${u.name} из чата?`)) {
+                                onKickMember && onKickMember(chat.id, u.id);
+                              }
+                            }}
+                            className="p-1 rounded-lg text-rose-400 hover:bg-rose-500/15 hover:text-rose-300 transition cursor-pointer"
+                            title={`Выгнать ${u.name} из чата`}
+                          >
+                            <UserMinus size={14} />
+                          </button>
+                        )}
+
+                        {onSelectUserChat && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectUserChat(u);
+                            }}
+                            className="p-1.5 rounded-lg text-[#5288c1] hover:bg-[#5288c1]/15 transition"
+                            title={`Написать / Позвонить ${u.name}`}
+                          >
+                            <Phone size={14} />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      {onSelectUserChat && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectUserChat(u);
-                          }}
-                          className="p-1.5 rounded-lg text-[#5288c1] hover:bg-[#5288c1]/15 transition"
-                          title={`Написать / Позвонить ${u.name}`}
-                        >
-                          <Phone size={14} />
-                        </button>
-                      )}
-                      {u.id === chat.creatorId && (
-                        <span className="text-[10px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5">
-                          <ShieldCheck size={11} /> Создатель
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

@@ -81,7 +81,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [phone, setPhone] = useState(currentUser.phone || '');
   const [avatar, setAvatar] = useState(currentUser.avatar);
   const [verified, setVerified] = useState(currentUser.verified ?? false);
-  const [isPremium, setIsPremium] = useState(currentUser.isPremium ?? true);
+  const [isPremium, setIsPremium] = useState(currentUser.isPremium ?? false);
   const [emojiStatus, setEmojiStatus] = useState(currentUser.emojiStatus || '⚡');
   const [isUploading, setIsUploading] = useState(false);
   const [wallpaper, setWallpaper] = useState(() => localStorage.getItem('tg_wallpaper') || 'doodle');
@@ -99,7 +99,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [updateStatusMsg, setUpdateStatusMsg] = useState('');
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && currentUser) {
+      setName(currentUser.name);
+      setUsername(currentUser.username);
+      setBio(currentUser.bio || '');
+      setPhone(currentUser.phone || '');
+      setAvatar(currentUser.avatar);
+      setVerified(currentUser.verified ?? false);
+      setIsPremium(currentUser.isPremium ?? false);
+      setEmojiStatus(currentUser.emojiStatus || '⚡');
       setNotificationsOn(areNotificationsEnabled());
       setSoundsOn(areSoundsEnabled());
       setBgModeOn(isBackgroundModeEnabled());
@@ -107,7 +115,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         .then((info) => setUpdateCheckResult(info))
         .catch(() => {});
     }
-  }, [isOpen]);
+  }, [isOpen, currentUser]);
 
   const handleToggleNotifications = () => {
     const next = !notificationsOn;

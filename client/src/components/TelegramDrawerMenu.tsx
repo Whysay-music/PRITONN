@@ -281,10 +281,16 @@ export const TelegramDrawerMenu: React.FC<TelegramDrawerMenuProps> = ({
               onClose();
               onOpenSettingsModal();
             }}
-            className="w-full text-left p-2.5 rounded-2xl tg-framed-btn border-amber-500/30 hover:border-amber-500/60 flex items-center justify-between cursor-pointer group"
+            className={`w-full text-left p-2.5 rounded-2xl tg-framed-btn flex items-center justify-between cursor-pointer group ${
+              currentUser.isPremium ? 'border-amber-500/30 hover:border-amber-500/60' : 'border-zinc-700/30 hover:border-zinc-500/50'
+            }`}
           >
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center flex-shrink-0 text-base group-hover:scale-105 transition-transform">
+              <div className={`w-9 h-9 rounded-xl border flex items-center justify-center flex-shrink-0 text-base group-hover:scale-105 transition-transform ${
+                currentUser.isPremium
+                  ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                  : 'bg-zinc-800/40 border-zinc-700/40 text-zinc-400'
+              }`}>
                 ⭐
               </div>
               <div className="min-w-0">
@@ -292,13 +298,19 @@ export const TelegramDrawerMenu: React.FC<TelegramDrawerMenuProps> = ({
                   <span>PRITONN Premium</span>
                 </div>
                 <div className="text-[10px] text-[var(--tg-text-muted)] truncate">
-                  Все привилегии и фичи разблокированы
+                  {currentUser.isPremium ? 'Все привилегии и фичи разблокированы' : 'Нажмите, чтобы включить Premium'}
                 </div>
               </div>
             </div>
-            <span className="text-[10px] bg-gradient-to-r from-amber-500/30 to-amber-600/30 border border-amber-400/40 text-amber-300 px-2 py-0.5 rounded-full font-bold shadow-sm">
-              АКТИВЕН
-            </span>
+            {currentUser.isPremium ? (
+              <span className="text-[10px] bg-gradient-to-r from-amber-500/30 to-amber-600/30 border border-amber-400/40 text-amber-300 px-2 py-0.5 rounded-full font-bold shadow-sm">
+                АКТИВЕН
+              </span>
+            ) : (
+              <span className="text-[10px] bg-zinc-800/80 border border-zinc-600/40 text-zinc-400 px-2 py-0.5 rounded-full font-bold shadow-sm">
+                ОТКЛЮЧЕН
+              </span>
+            )}
           </button>
 
           {/* Mini Apps */}

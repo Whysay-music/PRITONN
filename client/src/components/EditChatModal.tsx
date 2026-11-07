@@ -7,7 +7,7 @@ interface EditChatModalProps {
   isOpen: boolean;
   chat: Chat | null;
   onClose: () => void;
-  onSave: (chatId: string, updated: { name: string; description: string; avatar: string }) => void;
+  onSave: (chatId: string, updated: { name: string; username?: string; description: string; avatar: string }) => void;
 }
 
 export const EditChatModal: React.FC<EditChatModalProps> = ({
@@ -17,6 +17,7 @@ export const EditChatModal: React.FC<EditChatModalProps> = ({
   onSave,
 }) => {
   const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
   const [description, setDescription] = useState('');
   const [avatar, setAvatar] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -27,6 +28,7 @@ export const EditChatModal: React.FC<EditChatModalProps> = ({
   useEffect(() => {
     if (chat && isOpen) {
       setName(chat.displayName || chat.name || '');
+      setUsername(chat.username ? chat.username.replace(/^@/, '') : '');
       setDescription(chat.description || '');
       setAvatar(chat.displayAvatar || chat.avatar || '');
     }
@@ -70,6 +72,7 @@ export const EditChatModal: React.FC<EditChatModalProps> = ({
 
     onSave(chat.id, {
       name: name.trim(),
+      username: username.trim().replace(/^@/, ''),
       description: description.trim(),
       avatar: avatar.trim(),
     });
@@ -146,6 +149,26 @@ export const EditChatModal: React.FC<EditChatModalProps> = ({
               placeholder="Введите название..."
               className="w-full bg-[var(--tg-sidebar)] px-3.5 py-2.5 rounded-xl border border-[var(--tg-border)] text-sm outline-none text-[var(--tg-text)] focus:border-blue-500"
             />
+          </div>
+
+          {/* Username / Chat Tag */}
+          <div>
+            <label className="text-xs font-medium text-[var(--tg-text-muted)] block mb-1">
+              Тег / юзернейм чата (@тег)
+            </label>
+            <div className="relative flex items-center">
+              <span className="absolute left-3 text-sm text-[var(--tg-text-muted)] font-medium">@</span>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value.replace(/^@/, ''))}
+                placeholder="chat_tag"
+                className="w-full bg-[var(--tg-sidebar)] pl-7 pr-3.5 py-2.5 rounded-xl border border-[var(--tg-border)] text-sm outline-none text-[var(--tg-text)] focus:border-blue-500"
+              />
+            </div>
+            <p className="text-[10px] text-[var(--tg-text-muted)] mt-1">
+              Пользователи смогут находить чат в глобальном поиске по @{username || 'tag'}
+            </p>
           </div>
 
           {/* Description */}

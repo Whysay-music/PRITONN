@@ -72,6 +72,7 @@ export interface Chat {
   username?: string;
   pinnedMessageId?: string | null;
   members?: string[];
+  admins?: string[];
   subscribersCount?: number;
   membersCount?: number;
   verified?: boolean;

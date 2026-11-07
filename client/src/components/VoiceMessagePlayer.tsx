@@ -11,6 +11,7 @@ interface VoiceMessagePlayerProps {
   transcribedText?: string;
   onTranscribe?: () => void;
   onSaveTranscription?: (text: string) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 export const VoiceMessagePlayer: React.FC<VoiceMessagePlayerProps> = ({
@@ -20,6 +21,7 @@ export const VoiceMessagePlayer: React.FC<VoiceMessagePlayerProps> = ({
   isOutgoing = false,
   transcribedText,
   onSaveTranscription,
+  onContextMenu,
 }) => {
   const playerId = useId();
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -249,7 +251,16 @@ export const VoiceMessagePlayer: React.FC<VoiceMessagePlayerProps> = ({
   const displayedSeconds = isPlaying || currentTime > 0 ? currentTime : effectiveDuration;
 
   return (
-    <div className="flex flex-col gap-1.5 py-1 px-1 min-w-[245px] max-w-[320px] select-none">
+    <div
+      onContextMenu={(e) => {
+        if (onContextMenu) {
+          e.preventDefault();
+          e.stopPropagation();
+          onContextMenu(e);
+        }
+      }}
+      className="flex flex-col gap-1.5 py-1 px-1 min-w-[245px] max-w-[320px] select-none"
+    >
       {resolvedSrc && (
         <audio ref={audioRef} src={resolvedSrc} preload="metadata" playsInline />
       )}

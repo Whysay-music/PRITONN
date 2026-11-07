@@ -6,11 +6,13 @@ interface TelegramRoundVideoPlayerProps {
   src: string;
   duration?: number;
   isOutgoing?: boolean;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 export const TelegramRoundVideoPlayer: React.FC<TelegramRoundVideoPlayerProps> = ({
   src,
   duration = 10,
+  onContextMenu,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -99,7 +101,15 @@ export const TelegramRoundVideoPlayer: React.FC<TelegramRoundVideoPlayerProps> =
 
   return (
     <div
-      onClick={togglePlay} onDoubleClick={toggleSpeed}
+      onClick={togglePlay}
+      onDoubleClick={toggleSpeed}
+      onContextMenu={(e) => {
+        if (onContextMenu) {
+          e.preventDefault();
+          e.stopPropagation();
+          onContextMenu(e);
+        }
+      }}
       className="relative w-52 h-52 sm:w-56 sm:h-56 rounded-full cursor-pointer group select-none overflow-hidden shadow-xl border-2 border-[#5288c1]/40 bg-black"
       title={isPlaying ? 'Пауза' : 'Смотреть видеокружок'}
     >
@@ -132,6 +142,13 @@ export const TelegramRoundVideoPlayer: React.FC<TelegramRoundVideoPlayerProps> =
         src={resolvedSrc}
         playsInline
         preload="metadata"
+        onContextMenu={(e) => {
+          if (onContextMenu) {
+            e.preventDefault();
+            e.stopPropagation();
+            onContextMenu(e);
+          }
+        }}
         className="w-full h-full object-cover rounded-full"
       />
 

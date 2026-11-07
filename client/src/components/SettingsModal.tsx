@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { User as UserIcon, X, Camera, Moon, Sun, Upload, Check, Folder, Sparkles, Shield } from 'lucide-react';
+import { User as UserIcon, X, Camera, Moon, Sun, Upload, Check, Folder, Sparkles, Shield, Lock, Smartphone, Laptop, KeyRound, LogOut } from 'lucide-react';
 import { User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { API_BASE_URL } from '../config';
@@ -21,6 +21,9 @@ interface SettingsModalProps {
     emojiStatus?: string;
   }) => void;
   onOpenCustomFolders?: () => void;
+  onOpenAppLockSetup?: () => void;
+  isAppLockEnabled?: boolean;
+  onToggleAppLock?: (enabled: boolean) => void;
   onClose: () => void;
 }
 
@@ -33,6 +36,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onToggleTheme,
   onUpdateProfile,
   onOpenCustomFolders,
+  onOpenAppLockSetup,
+  isAppLockEnabled = false,
+  onToggleAppLock,
   onClose,
 }) => {
   const [name, setName] = useState(currentUser.name);
@@ -334,6 +340,92 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Недоступно
               </span>
             )}
+          </div>
+
+          {/* Privacy & App Lock (Код-пароль разблокировки) */}
+          <div className="bg-[var(--tg-sidebar)] p-3.5 rounded-xl border border-[var(--tg-border)] flex flex-col gap-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Lock size={16} className="text-[#3390ec]" />
+                <div>
+                  <div className="text-xs font-semibold text-[var(--tg-text)]">Код-пароль (App Lock)</div>
+                  <div className="text-[10px] text-[var(--tg-text-muted)]">
+                    Защита переписки 4-значным PIN-кодом
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onToggleAppLock) onToggleAppLock(!isAppLockEnabled);
+                }}
+                className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer p-0.5 ${
+                  isAppLockEnabled ? 'bg-[#3390ec]' : 'bg-zinc-700'
+                }`}
+              >
+                <div
+                  className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
+                    isAppLockEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+            {isAppLockEnabled && onOpenAppLockSetup && (
+              <button
+                type="button"
+                onClick={onOpenAppLockSetup}
+                className="mt-1 text-xs text-[#3390ec] hover:underline font-medium text-left flex items-center gap-1.5 cursor-pointer"
+              >
+                <KeyRound size={13} />
+                <span>Сменить PIN-код разблокировки</span>
+              </button>
+            )}
+          </div>
+
+          {/* Active Devices & Sessions */}
+          <div className="bg-[var(--tg-sidebar)] p-3.5 rounded-xl border border-[var(--tg-border)] flex flex-col gap-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Smartphone size={16} className="text-emerald-400" />
+                <div className="text-xs font-semibold text-[var(--tg-text)]">Устройства и сеансы</div>
+              </div>
+              <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                2 активны
+              </span>
+            </div>
+
+            <div className="space-y-2 mt-1">
+              <div className="flex items-center justify-between text-xs p-2 rounded-lg bg-black/10 dark:bg-white/5">
+                <div className="flex items-center gap-2">
+                  <Laptop size={15} className="text-[#3390ec]" />
+                  <div>
+                    <div className="font-medium text-[var(--tg-text)]">PRITONN Desktop (Windows)</div>
+                    <div className="text-[10px] text-[var(--tg-text-muted)]">Этот компьютер • В сети</div>
+                  </div>
+                </div>
+                <span className="text-[10px] text-[#3390ec] font-bold">ОНЛАЙН</span>
+              </div>
+
+              <div className="flex items-center justify-between text-xs p-2 rounded-lg bg-black/10 dark:bg-white/5">
+                <div className="flex items-center gap-2">
+                  <Smartphone size={15} className="text-emerald-400" />
+                  <div>
+                    <div className="font-medium text-[var(--tg-text)]">PRITONN Mobile (Android)</div>
+                    <div className="text-[10px] text-[var(--tg-text-muted)]">Приложение • Версия 5.8.9</div>
+                  </div>
+                </div>
+                <span className="text-[10px] text-emerald-400 font-bold">АКТИВНО</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => alert('Все остальные сеансы успешно завершены.')}
+              className="mt-1 text-xs text-rose-400 hover:text-rose-300 font-medium text-left flex items-center gap-1.5 cursor-pointer transition"
+            >
+              <LogOut size={13} />
+              <span>Завершить все другие сеансы</span>
+            </button>
           </div>
 
           {/* Edit current profile info */}

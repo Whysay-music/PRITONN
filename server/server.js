@@ -1658,6 +1658,25 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('user_stop_typing', data);
   });
 
+  socket.on('game_move', ({ messageId, chatId, board, winner }) => {
+    const msg = (db.messages || []).find(m => m.id === messageId);
+    if (msg) {
+      if (!msg.gameData) msg.gameData = { type: 'tictactoe', board, turn: 'X' };
+      msg.gameData.board = board;
+      msg.gameData.winner = winner;
+      saveData(db);
+    }
+    const chat = (db.chats || []).find(c => c.id === chatId);
+    if (chat && Array.isArray(chat.members)) {
+      chat.members.forEach(mId => {
+        const s = userSockets.get(mId);
+        if (s) s.forEach(sId => io.to(sId).emit('game_move', { messageId, board, winner }));
+      });
+    } else {
+      io.emit('game_move', { messageId, board, winner });
+    }
+  });
+
   socket.on('disconnect', () => {
     const userId = socketToUser.get(socket.id);
     if (userId) {

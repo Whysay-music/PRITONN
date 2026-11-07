@@ -57,6 +57,14 @@ export const VoiceMessagePlayer: React.FC<VoiceMessagePlayerProps> = ({
     else setSpeed(1);
   };
 
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const newProgress = Math.max(0, Math.min(100, (clickX / rect.width) * 100));
+    setCurrentProgress(newProgress);
+    if (!isPlaying) setIsPlaying(true);
+  };
+
   const handleTranscribeClick = async () => {
     if (localTranscribed) {
       setLocalTranscribed(undefined);
@@ -104,7 +112,11 @@ export const VoiceMessagePlayer: React.FC<VoiceMessagePlayerProps> = ({
 
         {/* Waveform and duration */}
         <div className="flex-1 flex flex-col justify-center gap-1">
-          <div className="flex items-center gap-[2.5px] h-6 cursor-pointer">
+          <div
+            onClick={handleSeek}
+            title="Нажмите в любое место волны для перемотки"
+            className="flex items-center gap-[2.5px] h-6 cursor-pointer py-1 group/wave"
+          >
             {bars.map((height, i) => {
               const barProgress = (i / bars.length) * 100;
               const isFilled = currentProgress >= barProgress;

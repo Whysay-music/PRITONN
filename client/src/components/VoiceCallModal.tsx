@@ -17,6 +17,7 @@ import {
   UserPlus,
   Check,
   X,
+  Radio,
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { Chat, User } from '../types';
@@ -84,6 +85,47 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const [inviteSearch, setInviteSearch] = useState('');
   const [invitedUserIds, setInvitedUserIds] = useState<string[]>([]);
   const [inviteToast, setInviteToast] = useState<string | null>(null);
+  const [isRecordingCall, setIsRecordingCall] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+
+  const toggleCallRecording = () => {
+    if (isRecordingCall) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecordingCall(false);
+      alert('Запись звонка остановлена и загружена на ваше устройство!');
+    } else {
+      try {
+        const stream = localStreamRef.current || remoteStreamRef.current;
+        if (!stream) {
+          alert('Нет активного аудиопотока для записи');
+          return;
+        }
+        const mediaRecorder = new MediaRecorder(stream);
+        recordedChunksRef.current = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `PRITONN_Call_${Date.now()}.webm`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        };
+        mediaRecorder.start();
+        mediaRecorderRef.current = mediaRecorder;
+        setIsRecordingCall(true);
+      } catch (err) {
+        console.warn('Call recording error:', err);
+      }
+    }
+  };
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -1656,6 +1698,20 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             title="Пригласить участников в звонок"
           >
             <UserPlus size={20} />
+          </button>
+
+          {/* Call Recording button */}
+          <button
+            type="button"
+            onClick={toggleCallRecording}
+            className={`p-3 rounded-full transition shadow-md cursor-pointer ${
+              isRecordingCall
+                ? 'bg-rose-500 text-white animate-pulse shadow-rose-500/40'
+                : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
+            }`}
+            title={isRecordingCall ? 'Остановить запись звонка' : 'Записать разговор (диктофон)'}
+          >
+            <Radio size={20} className={isRecordingCall ? 'animate-spin' : ''} />
           </button>
 
           {isRemoteScreenSharing && !isViewingRemoteScreen && (

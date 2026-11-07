@@ -22,6 +22,7 @@ import { TelegramMiniAppModal } from './components/TelegramMiniAppModal';
 import { CustomFoldersModal } from './components/CustomFoldersModal';
 import { FullscreenEmojiEffect } from './components/FullscreenEmojiEffect';
 import { CallHistoryModal } from './components/CallHistoryModal';
+import { AppLockModal } from './components/AppLockModal';
 import { soundEffects } from './utils/sound';
 import { API_BASE_URL } from './config';
 
@@ -35,6 +36,20 @@ export const App: React.FC = () => {
   const [isTyping] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [isInitializing, setIsInitializing] = useState(true);
+
+  // App Lock PIN Code state
+  const [savedPin, setSavedPin] = useState<string | null>(() => {
+    return localStorage.getItem('pritonn_app_pin') || null;
+  });
+  const [isAppLockEnabled, setIsAppLockEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('pritonn_app_lock_enabled') === 'true';
+  });
+  const [isAppLocked, setIsAppLocked] = useState<boolean>(() => {
+    const hasPin = !!localStorage.getItem('pritonn_app_pin');
+    const enabled = localStorage.getItem('pritonn_app_lock_enabled') === 'true';
+    return hasPin && enabled;
+  });
+  const [isSettingPin, setIsSettingPin] = useState<boolean>(false);
 
   // Modals & Drawers
   const [activeStory, setActiveStory] = useState<Story | null>(null);
@@ -431,6 +446,21 @@ export const App: React.FC = () => {
       );
     });
 
+    socket.on('game_move', ({ messageId, board, winner }: { messageId: string; board: (string | null)[]; winner: string | null }) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? {
+                ...m,
+                gameData: m.gameData
+                  ? { ...m.gameData, board, winner }
+                  : { type: 'tictactoe', board, turn: 'X', winner, playerX: { id: '', name: '' } },
+              }
+            : m
+        )
+      );
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -628,8 +658,23 @@ export const App: React.FC = () => {
     replyToId?: string;
     forwardFrom?: { name: string; username?: string };
     isSilent?: boolean;
+    isSticker?: boolean;
+    stickerUrl?: string;
+    isGif?: boolean;
+    gifUrl?: string;
+    gameData?: any;
+    scheduledFor?: number;
   }) => {
     if (!activeChat || !currentUser) return;
+
+    if (data.scheduledFor && data.scheduledFor > Date.now()) {
+      const delay = data.scheduledFor - Date.now();
+      setTimeout(() => {
+        handleSendMessage({ ...data, scheduledFor: undefined });
+      }, delay);
+      alert(`Сообщение отложено и будет отправлено автоматически в ${new Date(data.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+      return;
+    }
 
     try {
       await fetch(`${API_BASE_URL}/api/chats/${activeChat.id}/messages`, {
@@ -1085,6 +1130,8 @@ export const App: React.FC = () => {
             onSelectStory={(s) => setActiveStory(s)}
             onCreateStory={() => setIsCreateStoryOpen(true)}
             onRequestDeleteChat={(c) => setChatToDelete(c)}
+            onLockApp={() => setIsAppLocked(true)}
+            isAppLockEnabled={isAppLockEnabled}
           />
         </div>
 
@@ -1222,7 +1269,34 @@ export const App: React.FC = () => {
         isDark={isDark}
         onToggleTheme={() => setIsDark(!isDark)}
         onUpdateProfile={handleUpdateProfile}
+        onOpenCustomFolders={() => setIsFoldersModalOpen(true)}
+        onOpenAppLockSetup={() => setIsSettingPin(true)}
+        isAppLockEnabled={isAppLockEnabled}
+        onToggleAppLock={(enabled) => {
+          setIsAppLockEnabled(enabled);
+          localStorage.setItem('pritonn_app_lock_enabled', String(enabled));
+          if (enabled && !savedPin) {
+            setIsSettingPin(true);
+          }
+        }}
         onClose={() => setIsSettingsOpen(false)}
+      />
+
+      {/* App Lock PIN Code Screen */}
+      <AppLockModal
+        isLocked={isAppLocked}
+        savedPin={savedPin}
+        onUnlock={() => setIsAppLocked(false)}
+        isSettingPin={isSettingPin}
+        onCloseSetup={() => setIsSettingPin(false)}
+        onSetNewPin={(newPin) => {
+          setSavedPin(newPin);
+          localStorage.setItem('pritonn_app_pin', newPin);
+          setIsAppLockEnabled(true);
+          localStorage.setItem('pritonn_app_lock_enabled', 'true');
+          setIsSettingPin(false);
+          alert('Код-пароль успешно сохранён!');
+        }}
       />
 
       {/* Simulated & Real-time Voice Call Modal */}

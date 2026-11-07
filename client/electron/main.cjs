@@ -1,7 +1,55 @@
-const { app, BrowserWindow, session, ipcMain, desktopCapturer } = require('electron');
+const { app, BrowserWindow, session, ipcMain, desktopCapturer, Tray, Menu } = require('electron');
 const path = require('path');
 
 let mainWindow = null;
+let tray = null;
+let isQuitting = false;
+
+function createTray() {
+  const iconPath = path.join(__dirname, '../public/favicon.ico');
+  try {
+    tray = new Tray(iconPath);
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'Показать PRITONN',
+        click: () => {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        },
+      },
+      {
+        label: 'Свернуть в трей',
+        click: () => {
+          if (mainWindow) mainWindow.hide();
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Выход из PRITONN',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]);
+    tray.setToolTip('PRITONN — бесплатный мессенджер');
+    tray.setContextMenu(contextMenu);
+    tray.on('click', () => {
+      if (mainWindow) {
+        if (mainWindow.isVisible()) {
+          mainWindow.hide();
+        } else {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    });
+  } catch (err) {
+    console.warn('Could not initialize system tray:', err);
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -69,6 +117,13 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -90,7 +145,7 @@ ipcMain.on('window-maximize', () => {
 });
 
 ipcMain.on('window-close', () => {
-  if (mainWindow) mainWindow.close();
+  if (mainWindow) mainWindow.hide();
 });
 
 // Provide list of screens and windows with thumbnails for user selection
@@ -116,16 +171,19 @@ ipcMain.handle('get-desktop-sources', async () => {
 
 app.whenReady().then(() => {
   createWindow();
+  createTray();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+    } else if (mainWindow) {
+      mainWindow.show();
     }
   });
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && isQuitting) {
     app.quit();
   }
 });

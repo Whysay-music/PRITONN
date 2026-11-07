@@ -25,6 +25,7 @@ import {
   Folder,
   ArrowLeft,
   Gamepad2,
+  Lock,
 } from 'lucide-react';
 import { Chat, User, Story, CustomFolder } from '../types';
 import { StoriesBar } from './StoriesBar';
@@ -58,6 +59,8 @@ interface SidebarProps {
   onToggleTheme: () => void;
   onLogout: () => void;
   onSelectStory: (story: Story) => void;
+  onLockApp?: () => void;
+  isAppLockEnabled?: boolean;
   onCreateStory: () => void;
   onRequestDeleteChat?: (chat: Chat) => void;
 }
@@ -89,6 +92,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectStory,
   onCreateStory,
   onRequestDeleteChat,
+  onLockApp,
+  isAppLockEnabled,
 }) => {
   const [localTab, setLocalTab] = useState<string>('all');
   const activeTab = propActiveTab || localTab;
@@ -257,6 +262,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
           )}
         </div>
+
+        {/* Quick App Lock button */}
+        {isAppLockEnabled && onLockApp && (
+          <button
+            type="button"
+            onClick={onLockApp}
+            className="w-9 h-9 rounded-full flex items-center justify-center text-[var(--tg-text-muted)] hover:text-[#3390ec] hover:bg-[var(--tg-surface-hover)] transition cursor-pointer flex-shrink-0"
+            title="Заблокировать PRITONN (App Lock)"
+          >
+            <Lock size={16} />
+          </button>
+        )}
       </div>
 
       {/* Stories Bar */}

@@ -45,6 +45,7 @@ import {
   EyeOff,
   Bot,
   ArrowLeft,
+  Gamepad2,
 } from 'lucide-react';
 import { Chat, Message, User, ReplyInfo, InlineKeyboardButton } from '../types';
 import { VoiceMessagePlayer } from './VoiceMessagePlayer';
@@ -66,6 +67,10 @@ import { CreatePollModal } from './CreatePollModal';
 import { TelegramPollWidget } from './TelegramPollWidget';
 import { ForwardMessageModal } from './ForwardMessageModal';
 import { GroupVoiceChatModal } from './GroupVoiceChatModal';
+import { StickerGifPicker } from './StickerGifPicker';
+import { TicTacToeGame } from './TicTacToeGame';
+import { ChatWallpaperModal } from './ChatWallpaperModal';
+import { ScheduledMessageModal } from './ScheduledMessageModal';
 
 interface ChatAreaProps {
   chat: Chat | null;
@@ -91,6 +96,12 @@ interface ChatAreaProps {
     isSilent?: boolean;
     isSpoiler?: boolean;
     burnTimer?: number;
+    isSticker?: boolean;
+    stickerUrl?: string;
+    isGif?: boolean;
+    gifUrl?: string;
+    gameData?: any;
+    scheduledFor?: number;
   }) => void;
   onEditMessage?: (messageId: string, newText: string) => void;
   onVotePoll?: (pollId: string, optionId: string) => void;
@@ -233,6 +244,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [selectedPhoto, setSelectedPhoto] = useState<{ url: string; title?: string; timestamp?: number } | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<{ url: string; title?: string; timestamp?: number } | null>(null);
 
+  // New Modals: Stickers/GIF, Wallpaper, Scheduled Message
+  const [isStickerGifOpen, setIsStickerGifOpen] = useState(false);
+  const [isWallpaperModalOpen, setIsWallpaperModalOpen] = useState(false);
+  const [isScheduledModalOpen, setIsScheduledModalOpen] = useState(false);
+  const [chatWallpaper, setChatWallpaper] = useState<string>(() => {
+    return localStorage.getItem(`pritonn_chat_wallpaper_${chat?.id}`) || chat?.wallpaper || '';
+  });
+
+  useEffect(() => {
+    if (chat?.id) {
+      setChatWallpaper(localStorage.getItem(`pritonn_chat_wallpaper_${chat.id}`) || chat.wallpaper || '');
+    }
+  }, [chat?.id, chat?.wallpaper]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const photoVideoInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
@@ -311,7 +336,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     : (chat.displayAvatar || chat.avatar);
 
   // Handle message submit
-  const handleSend = (e?: React.FormEvent, forceSilent?: boolean) => {
+  const handleSend = (e?: React.FormEvent, forceSilent?: boolean, scheduledFor?: number) => {
     if (e) e.preventDefault();
     if (!inputText.trim()) return;
 
@@ -328,19 +353,19 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       isSilent: forceSilent || isSilentSend,
       isSpoiler: isSpoilerSend,
       burnTimer: selectedBurnTimer,
+      scheduledFor,
     });
 
     setInputText('');
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
-    }
-    if (chat && onSaveDraft) {
-      onSaveDraft(chat.id, '');
+      if (onSaveDraft) onSaveDraft(chat.id, '');
     }
     setIsSpoilerSend(false);
     setSelectedBurnTimer(undefined);
     setReplyingTo(null);
     setIsEmojiPickerOpen(false);
+    setIsStickerGifOpen(false);
     setIsSilentSend(false);
 
     if (textareaRef.current) {
@@ -598,6 +623,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             <Search size={18} />
           </button>
 
+          {/* Change Chat Wallpaper */}
+          <button
+            onClick={() => setIsWallpaperModalOpen(true)}
+            className="p-2 rounded-xl hover:text-[var(--tg-text)] hover:bg-[var(--tg-surface-hover)] transition cursor-pointer"
+            title="Сменить фон (обои) чата"
+          >
+            <ImageIcon size={18} />
+          </button>
+
           {/* Quick Edit Chat button (Name & Photo) */}
           {(chat.type === 'group' || chat.type === 'channel') && onOpenEditChatModal && (
             <button
@@ -802,7 +836,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       )}
 
       {/* Messages Scroll Area */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2">
+      <div
+        className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2 relative transition-all"
+        style={{
+          background: chatWallpaper
+            ? `url(${chatWallpaper}) center/cover no-repeat fixed`
+            : undefined,
+        }}
+      >
         {/* Date pill */}
         <div className="flex justify-center my-1 select-none">
           <span className="text-[11px] bg-[var(--tg-date-pill-bg)] backdrop-blur-md text-[var(--tg-date-pill-text)] px-3 py-0.5 rounded-full font-medium shadow-sm">
@@ -1001,7 +1042,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 }`}
               >
                 <div
-                  className={`max-w-[85%] md:max-w-[70%] lg:max-w-[60%] rounded-2xl p-2.5 shadow-sm relative transition-all ${
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    onReactMessage(msg.id, '❤️');
+                  }}
+                  title="Двойной клик — поставить сердечко ❤️"
+                  className={`max-w-[85%] md:max-w-[70%] lg:max-w-[60%] rounded-2xl p-2.5 shadow-sm relative transition-all cursor-default select-text ${
                     isOutgoing
                       ? 'bg-[var(--tg-bubble-out)] text-[var(--tg-bubble-out-text)] rounded-br-none shadow-[0_1px_2px_rgba(0,0,0,0.1)]'
                       : 'bg-[var(--tg-bubble-in)] text-[var(--tg-bubble-in-text)] rounded-bl-none shadow-[0_1px_2px_rgba(0,0,0,0.1)]'
@@ -1203,6 +1249,47 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       </div>
                     </div>
                   </div>
+                )}
+
+                {/* Sticker */}
+                {msg.isSticker && (msg.stickerUrl || msg.mediaUrl) && (
+                  <div className="my-1 flex justify-center">
+                    <img
+                      src={msg.stickerUrl || msg.mediaUrl || ''}
+                      alt="Sticker"
+                      className="w-36 h-36 object-contain rounded-xl hover:scale-105 transition drop-shadow-md"
+                    />
+                  </div>
+                )}
+
+                {/* Animated GIF */}
+                {msg.isGif && (msg.gifUrl || msg.mediaUrl) && (
+                  <div className="my-1 rounded-xl overflow-hidden max-w-xs shadow-md">
+                    <img
+                      src={msg.gifUrl || msg.mediaUrl || ''}
+                      alt="GIF"
+                      className="w-full h-auto object-cover rounded-xl"
+                    />
+                  </div>
+                )}
+
+                {/* In-chat Tic-Tac-Toe Game */}
+                {msg.gameData?.type === 'tictactoe' && (
+                  <TicTacToeGame
+                    gameData={msg.gameData}
+                    currentUser={currentUser}
+                    isOutgoing={isOutgoing}
+                    onMove={(newBoard, winner) => {
+                      if (socket) {
+                        socket.emit('game_move', {
+                          messageId: msg.id,
+                          chatId: chat.id,
+                          board: newBoard,
+                          winner,
+                        });
+                      }
+                    }}
+                  />
                 )}
 
                 {/* Voice Message, Dice, or Text */}
@@ -1575,6 +1662,32 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     <div className="text-[10px] text-[var(--tg-text-muted)]">Голосование в чате</div>
                   </div>
                 </button>
+
+                {/* TicTacToe Game button in attachment menu */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAttachMenuOpen(false);
+                    onSendMessage({
+                      text: '🎮 Сыграем в Крестики-нолики!',
+                      gameData: {
+                        type: 'tictactoe',
+                        board: Array(9).fill(null),
+                        turn: 'X',
+                        playerX: { id: currentUser.id, name: currentUser.name },
+                      },
+                    });
+                  }}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[var(--tg-surface-hover)] text-xs font-medium transition text-left cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0">
+                    <Gamepad2 size={18} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-[var(--tg-text)]">Крестики-нолики</div>
+                    <div className="text-[10px] text-[var(--tg-text-muted)]">Мини-игра в чате</div>
+                  </div>
+                </button>
               </div>
             </>
           )}
@@ -1746,11 +1859,33 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 >
                   <Smile size={20} />
                 </button>
+
+                {/* Stickers & GIF button */}
+                <button
+                  type="button"
+                  onClick={() => setIsStickerGifOpen(!isStickerGifOpen)}
+                  className={`p-1.5 rounded-full transition flex-shrink-0 cursor-pointer ${
+                    isStickerGifOpen
+                      ? 'text-[#3390ec] bg-blue-500/10'
+                      : 'text-[var(--tg-text-muted)] hover:text-[var(--tg-text)]'
+                  }`}
+                  title="Стикеры и GIF анимации"
+                >
+                  <Sparkles size={19} />
+                </button>
               </div>
 
               {/* Send or Mic / Video Note button */}
               {inputText.trim() ? (
                 <div className="flex items-center gap-1 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsScheduledModalOpen(true)}
+                    className="p-2 text-[var(--tg-text-muted)] hover:text-[#3390ec] hover:bg-[var(--tg-surface-hover)] rounded-full transition flex-shrink-0 cursor-pointer"
+                    title="Запланировать отправку (отложить)"
+                  >
+                    <Clock size={18} />
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleSend()}
@@ -1972,6 +2107,48 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         allUsers={allUsers}
         socket={socket}
         onClose={() => setIsGroupVoiceChatOpen(false)}
+      />
+
+      {/* Stickers & GIF Picker */}
+      <StickerGifPicker
+        isOpen={isStickerGifOpen}
+        onClose={() => setIsStickerGifOpen(false)}
+        onSelectSticker={(url) => {
+          onSendMessage({
+            text: '',
+            isSticker: true,
+            stickerUrl: url,
+          });
+        }}
+        onSelectGif={(url) => {
+          onSendMessage({
+            text: '',
+            isGif: true,
+            gifUrl: url,
+          });
+        }}
+      />
+
+      {/* Chat Wallpaper Modal */}
+      <ChatWallpaperModal
+        isOpen={isWallpaperModalOpen}
+        chatId={chat.id}
+        currentWallpaper={chatWallpaper}
+        onClose={() => setIsWallpaperModalOpen(false)}
+        onSaveWallpaper={(newWallpaper) => {
+          setChatWallpaper(newWallpaper);
+          localStorage.setItem(`pritonn_chat_wallpaper_${chat.id}`, newWallpaper);
+        }}
+      />
+
+      {/* Scheduled Message Modal */}
+      <ScheduledMessageModal
+        isOpen={isScheduledModalOpen}
+        messageText={inputText}
+        onClose={() => setIsScheduledModalOpen(false)}
+        onSchedule={(targetTime) => {
+          handleSend(undefined, false, targetTime);
+        }}
       />
     </div>
   );

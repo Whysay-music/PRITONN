@@ -21,6 +21,8 @@ export interface User {
   isPremium?: boolean;
   emojiStatus?: string;
   customFolders?: CustomFolder[];
+  appLockPin?: string;
+  appLockEnabled?: boolean;
 }
 
 export interface Story {
@@ -56,6 +58,7 @@ export interface Chat {
   targetUser?: User | null;
   lastMessage?: Message | null;
   unreadCount?: number;
+  wallpaper?: string;
 }
 
 export interface ReplyInfo {
@@ -114,4 +117,17 @@ export interface Message {
   burnedAt?: number;
   transcribedText?: string;
   isTranscribing?: boolean;
+  isSticker?: boolean;
+  stickerUrl?: string;
+  isGif?: boolean;
+  gifUrl?: string;
+  gameData?: {
+    type: 'tictactoe';
+    board: (string | null)[];
+    turn: string; // userId whose turn it is
+    winner?: string | null; // userId or 'draw' or null
+    playerX: { id: string; name: string };
+    playerO?: { id: string; name: string };
+  };
+  scheduledFor?: number;
 }

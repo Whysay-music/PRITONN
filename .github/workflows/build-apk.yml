@@ -5,7 +5,6 @@ on:
     branches: [ main ]
     paths-ignore:
       - 'server/**'
-      - '.github/**'
   workflow_dispatch:
 
 permissions:
@@ -76,42 +75,34 @@ jobs:
           cd client/android
           ./gradlew assembleDebug --stacktrace
 
+      - name: Extract Version
+        id: get_version
+        run: |
+          VERSION=$(node -p "require('./client/package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Rename APK
         run: |
-          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.18.0.apk
+          cp client/android/app/build/outputs/apk/debug/app-debug.apk "PRITONN_v${{ steps.get_version.outputs.VERSION }}.apk"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: PRITONN-Android-APK
-          path: PRITONN_v5.18.0.apk
+          path: "PRITONN_v${{ steps.get_version.outputs.VERSION }}.apk"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/heads/main')
         with:
-          tag_name: v5.18.0
-          name: PRITONN v5.18.0 (Floating Pill Input, Mobile Bottom Nav, PiP Call Pill, 2X Video Notes, Stories Thumbs)
+          tag_name: "v${{ steps.get_version.outputs.VERSION }}"
+          name: "PRITONN v${{ steps.get_version.outputs.VERSION }}"
           body: |
-            ## 🟣 PRITONN Messenger v5.18.0 — Глобальное обновление дизайна, мобильной навигации и эргономики!
-            
-            ### 🌟 Что нового в версии 5.18.0:
-            1. 💬 **Плавающая панель ввода («Floating Pill Bar»)**:
-               - Современная строка ввода в стиле iOS 18 / Telegram Glassmorphism с мягким парением над чатом, полупрозрачным фоном и подсветкой.
-            2. 📱 **Мобильная панель навигации (Mobile Bottom Nav)**:
-               - Полноценная нижняя панель на смартфонах с вкладками: «Чаты» (с бейджем непрочитанных), «Истории», «Звонки» и «Меню».
-            3. 📞 **Плавающий виджет активного звонка (Floating Call Pill)**:
-               - При сворачивании звонка отображается компактная капсула в углу экрана с таймером, аватаркой, живым эквалайзером волны, быстрым выключением микрофона и завершением звонка в один клик.
-            4. 📹 **Видео-кругляшки 2.0 с режимом 2X**:
-               - Кнопка «2X» и поддержка двойного клика для мгновенного ускорения воспроизведения кругляшка в 2 раза.
-            5. 📸 **Превью медиа в Историях (Stories)**:
-               - В кружочках историй отображаются реальные мини-кадры фото с бейджем аватарки автора.
-            6. 🔎 **Быстрые фильтры поиска**:
-               - Чипсы фильтрации в поиске: «Все», «Медиа», «Файлы», «Голосовые», «Ссылки».
-            7. ✍️ **Анимированный статус набора текста**:
-               - Пульсирующие прыгающие точки «печатает...» в списке чатов при активности собеседника.
-            8. 🪙 **Интерактивные чипсы монет и статуса в шапке Меню**:
-               - Прямой доступ к балансу монет PRITONN Coins и смене эмодзи-статуса в 1 клик.
-          files: PRITONN_v5.18.0.apk
+            ## 🟣 PRITONN Messenger v${{ steps.get_version.outputs.VERSION }}
+            - Контекстное меню для своих сообщений со статусом доставки и временем прочтения
+            - Устранение дублирования историй (Stories)
+            - Права создателя и администраторов чата (изменение названия, тега, удаление участников, назначение админов)
+            - Сохранение настроек при отключении PRITONN Premium
+          files: "PRITONN_v${{ steps.get_version.outputs.VERSION }}.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

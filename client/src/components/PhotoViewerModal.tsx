@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Download, ZoomIn, ZoomOut, RotateCw } from 'lucide-react';
+import { resolveMediaUrl } from '../utils/avatar';
 
 interface PhotoViewerModalProps {
   isOpen: boolean;
@@ -35,10 +36,13 @@ export const PhotoViewerModal: React.FC<PhotoViewerModalProps> = ({
 
   if (!isOpen || !imageUrl) return null;
 
+  const resolvedUrl = resolveMediaUrl(imageUrl);
+
   const handleDownload = () => {
     const a = document.createElement('a');
-    a.href = imageUrl;
-    a.download = title || `telegram_photo_${Date.now()}.jpg`;
+    a.href = resolvedUrl;
+    a.target = '_blank';
+    a.download = title || `pritonn_photo_${Date.now()}.jpg`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -54,9 +58,9 @@ export const PhotoViewerModal: React.FC<PhotoViewerModalProps> = ({
     : '';
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-md select-none animate-fade-in">
+    <div className="fixed inset-0 z-50 flex flex-col bg-black/90 backdrop-blur-md select-none animate-fade-in safe-area-modal">
       {/* Top Controls Bar */}
-      <div className="h-14 px-5 flex items-center justify-between text-white bg-gradient-to-b from-black/80 to-transparent z-10">
+      <div className="min-h-[56px] px-4 py-2 flex items-center justify-between text-white bg-gradient-to-b from-black/80 to-transparent z-10">
         <div>
           <div className="font-medium text-sm truncate max-w-md">
             {title || 'Фотография'}
@@ -125,7 +129,7 @@ export const PhotoViewerModal: React.FC<PhotoViewerModalProps> = ({
         }}
       >
         <img
-          src={imageUrl}
+          src={resolvedUrl}
           alt={title || 'Фото'}
           style={{
             transform: `scale(${scale}) rotate(${rotation}deg)`,

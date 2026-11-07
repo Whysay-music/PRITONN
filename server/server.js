@@ -29,24 +29,52 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-// Multer storage
+// Multer storage with safe extension inference for mobile & blob uploads
+const MIME_EXT_MAP = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'video/webm': '.webm',
+  'video/mp4': '.mp4',
+  'video/quicktime': '.mov',
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/wav': '.wav',
+  'audio/ogg': '.ogg',
+  'audio/webm': '.webm',
+  'audio/mp4': '.m4a',
+  'audio/x-m4a': '.m4a',
+  'audio/aac': '.aac',
+  'application/pdf': '.pdf',
+};
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOADS_DIR),
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
+    let ext = path.extname(file.originalname || '').toLowerCase();
+    if (!ext && file.mimetype) {
+      const baseMime = file.mimetype.split(';')[0].trim().toLowerCase();
+      ext = MIME_EXT_MAP[baseMime] || '';
+    }
     cb(null, `${uniqueSuffix}${ext}`);
   }
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 }
+  limits: { fileSize: 200 * 1024 * 1024 }
 });
 
 app.use(cors());
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
-app.use('/uploads', express.static(UPLOADS_DIR));
+app.use(express.json({ limit: '150mb' }));
+app.use(express.urlencoded({ extended: true, limit: '150mb' }));
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Accept-Ranges', 'bytes');
+  next();
+}, express.static(UPLOADS_DIR));
 
 if (fs.existsSync(CLIENT_DIST)) {
   app.use(express.static(CLIENT_DIST));
@@ -131,6 +159,8 @@ let db = loadData();
 const userSockets = new Map(); // userId -> Set<socketId>
 const socketToUser = new Map(); // socketId -> userId
 const voiceRoomScreenShares = new Map(); // chatId -> Map(sharerId -> { sharerId, sharerName })
+const recentRecordedCalls = new Map(); // sortedPairKey -> timestamp
+const activeGroupVoiceChats = new Map(); // chatId -> { startedAt, initiatorId, participants: Set<userId> }
 
 // Reset online status on server startup
 if (db.users) {
@@ -321,16 +351,29 @@ function generateBotReply(prompt) {
 // --- AUTH API ---
 
 // Upload avatar / file endpoint
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'Файл не загружен' });
-  }
-  const fileUrl = `/uploads/${req.file.filename}`;
-  res.json({
-    url: fileUrl,
-    filename: req.file.originalname,
-    mimetype: req.file.mimetype,
-    size: req.file.size
+app.post('/api/upload', (req, res) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      console.error('Upload error:', err);
+      return res.status(400).json({ error: err.message || 'Ошибка загрузки файла' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'Файл не загружен' });
+    }
+    let originalName = req.file.originalname || req.file.filename;
+    try {
+      // Fix Mojibake for Cyrillic filenames uploaded via multipart/form-data
+      if (/[\u0080-\u00ff]/.test(originalName) && !/[а-яёА-ЯЁ]/.test(originalName)) {
+        originalName = Buffer.from(originalName, 'latin1').toString('utf8');
+      }
+    } catch {}
+    const fileUrl = `/uploads/${req.file.filename}`;
+    res.json({
+      url: fileUrl,
+      filename: originalName,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    });
   });
 });
 
@@ -839,10 +882,16 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
     diceValue,
     burnTimer: req.body.burnTimer ? Number(req.body.burnTimer) : null,
     inlineKeyboard: req.body.inlineKeyboard || null,
+    isSticker: !!req.body.isSticker,
+    stickerUrl: req.body.stickerUrl || null,
+    isGif: !!req.body.isGif,
+    gifUrl: req.body.gifUrl || null,
+    gameData: req.body.gameData || null,
     members: Array.isArray(chat.members) ? chat.members : [],
   };
 
   db.messages.push(newMessage);
+  chat.lastMessage = newMessage;
   saveData(db);
 
   // Send message strictly to members of this chat (NEVER broadcast to unrelated users)
@@ -936,10 +985,10 @@ app.post('/api/messages/:id/pin', (req, res) => {
   }
 });
 
-// Edit chat (Name, Description, Avatar)
+// Edit chat (Name, Description, Avatar, Wallpaper)
 app.put('/api/chats/:chatId', (req, res) => {
   const { chatId } = req.params;
-  const { name, description, avatar, currentUserId } = req.body;
+  const { name, description, avatar, wallpaper, currentUserId } = req.body;
 
   const chat = db.chats.find(c => c.id === chatId);
   if (!chat) {
@@ -960,6 +1009,9 @@ app.put('/api/chats/:chatId', (req, res) => {
   if (avatar) {
     chat.avatar = avatar;
     chat.displayAvatar = chat.avatar;
+  }
+  if (wallpaper !== undefined) {
+    chat.wallpaper = wallpaper;
   }
 
   saveData(db);
@@ -1380,26 +1432,29 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Debounce & record call event message in 1-on-1 direct chat timeline
-  let lastRecordedCallKey = '';
-  let lastRecordedCallTime = 0;
-
-  function recordCallMessage({ callerId, receiverId, duration = 0, status = 'completed', isVideo = false }) {
+  // Debounce & record call event message in 1-on-1 direct chat timeline (global across sockets)
+  function recordCallMessage({ callerId, receiverId, chatId: explicitChatId, duration = 0, status = 'completed', isVideo = false }) {
     if (!callerId || !receiverId) return null;
     const key = [callerId, receiverId].sort().join(':');
     const now = Date.now();
-    if (key === lastRecordedCallKey && (now - lastRecordedCallTime < 2500)) {
+    const prevTime = recentRecordedCalls.get(key) || 0;
+    if (now - prevTime < 3000) {
       return null;
     }
-    lastRecordedCallKey = key;
-    lastRecordedCallTime = now;
+    recentRecordedCalls.set(key, now);
 
-    let directChat = db.chats.find(c =>
-      c.type === 'direct' &&
-      c.members &&
-      c.members.includes(callerId) &&
-      c.members.includes(receiverId)
-    );
+    let directChat = explicitChatId
+      ? db.chats.find(c => c.id === explicitChatId)
+      : null;
+
+    if (!directChat) {
+      directChat = db.chats.find(c =>
+        c.type === 'direct' &&
+        c.members &&
+        c.members.includes(callerId) &&
+        c.members.includes(receiverId)
+      );
+    }
 
     if (!directChat) {
       directChat = {
@@ -1415,6 +1470,12 @@ io.on('connection', (socket) => {
     }
 
     const dur = Number(duration) || 0;
+    const summaryText = dur > 0
+      ? (isVideo ? '📹 Видеозвонок завершён' : '📞 Звонок завершён')
+      : status === 'rejected'
+      ? '📞 Звонок отклонён'
+      : '📞 Звонок завершён (без ответа)';
+
     const callMsg = {
       id: 'msg_' + uuidv4(),
       chatId: directChat.id,
@@ -1427,7 +1488,7 @@ io.on('connection', (socket) => {
         status, // 'completed' | 'missed' | 'rejected' | 'cancelled'
         isVideo: !!isVideo,
       },
-      text: '',
+      text: summaryText,
       timestamp: Date.now(),
       status: 'read',
       members: Array.isArray(directChat.members) ? directChat.members : [callerId, receiverId]
@@ -1435,6 +1496,7 @@ io.on('connection', (socket) => {
 
     db.messages = db.messages || [];
     db.messages.push(callMsg);
+    directChat.lastMessage = callMsg;
     saveData(db);
 
     const recipients = Array.isArray(directChat.members) && directChat.members.length > 0 ? directChat.members : [callerId, receiverId];
@@ -1445,6 +1507,51 @@ io.on('connection', (socket) => {
       }
     });
     return callMsg;
+  }
+
+  function finishGroupVoiceChatIfEmpty(chatId, fallbackUserId) {
+    if (!chatId) return;
+    const session = activeGroupVoiceChats.get(chatId);
+    if (!session) return;
+
+    const room = io.sockets.adapter.rooms.get(`voice_room_${chatId}`);
+    const remainingSockets = room ? room.size : 0;
+    if (remainingSockets === 0 || session.participants.size === 0) {
+      activeGroupVoiceChats.delete(chatId);
+      const chat = db.chats.find(c => c.id === chatId);
+      if (!chat) return;
+
+      const durationSec = Math.max(1, Math.round((Date.now() - (session.startedAt || Date.now())) / 1000));
+      const endMsg = {
+        id: 'msg_' + uuidv4(),
+        chatId,
+        senderId: fallbackUserId || session.initiatorId || chat.creatorId || (chat.members && chat.members[0]) || 'system',
+        text: '📞 Голосовой звонок завершён',
+        type: 'voice_chat_end',
+        callData: {
+          callerId: session.initiatorId || fallbackUserId || '',
+          receiverId: chatId,
+          duration: durationSec,
+          status: 'completed',
+          isVideo: false
+        },
+        timestamp: Date.now(),
+        status: 'read',
+        members: chat.members || []
+      };
+
+      db.messages = db.messages || [];
+      db.messages.push(endMsg);
+      chat.lastMessage = endMsg;
+      saveData(db);
+
+      (chat.members || []).forEach(memberId => {
+        const mSockets = userSockets.get(memberId);
+        if (mSockets) {
+          mSockets.forEach(sId => io.to(sId).emit('new_message', endMsg));
+        }
+      });
+    }
   }
 
   socket.on('call_reject', ({ callerId, targetUserId }) => {
@@ -1479,10 +1586,10 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('call_end', ({ callerId, targetUserId, duration = 0, isVideo = false }) => {
+  const handleCallEndEvent = ({ callerId, targetUserId, chatId, duration = 0, status: explicitStatus, isVideo = false }) => {
     if (callerId && targetUserId) {
       const dur = Number(duration) || 0;
-      const status = dur > 0 ? 'completed' : 'cancelled';
+      const status = explicitStatus || (dur > 0 ? 'completed' : 'cancelled');
       const record = {
         id: 'call_' + uuidv4(),
         callerId,
@@ -1500,6 +1607,7 @@ io.on('connection', (socket) => {
       recordCallMessage({
         callerId,
         receiverId: targetUserId,
+        chatId,
         duration: dur,
         status,
         isVideo: !!isVideo
@@ -1517,15 +1625,29 @@ io.on('connection', (socket) => {
         callerSockets.forEach((sId) => io.to(sId).emit('call_ended'));
       }
     }
-  });
+  };
 
-  // Camera Video Signaling
+  socket.on('call_end', handleCallEndEvent);
+  socket.on('end_call', handleCallEndEvent);
+
+  // Camera Video Signaling & Zero-Black-Screen Fallback Relay
   socket.on('call_camera_status', ({ callerId, callerName, targetUserId, isVideo }) => {
     if (targetUserId) {
       const targetSockets = userSockets.get(targetUserId);
       if (targetSockets) {
         targetSockets.forEach((sId) => {
           io.to(sId).emit('call_camera_status', { callerId, callerName, isVideo });
+        });
+      }
+    }
+  });
+
+  socket.on('call_camera_frame', ({ targetUserId, frame, senderId }) => {
+    if (targetUserId) {
+      const targetSockets = userSockets.get(targetUserId);
+      if (targetSockets) {
+        targetSockets.forEach((sId) => {
+          io.to(sId).emit('call_camera_frame', { frame, senderId });
         });
       }
     }
@@ -1583,14 +1705,28 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Group Voice Chat Signaling (Invitations, Joining & Screen Share)
+  // Group Voice Chat Signaling (Invitations, Joining, Ending & Screen Share)
   socket.on('voice_chat_start', ({ chatId, chatName, initiatorId, initiatorName }) => {
     socket.join(`voice_room_${chatId}`);
     if (chatId) {
+      let session = activeGroupVoiceChats.get(chatId);
+      const isNewSession = !session;
+      if (!session) {
+        session = {
+          startedAt: Date.now(),
+          initiatorId,
+          participants: new Set()
+        };
+        activeGroupVoiceChats.set(chatId, session);
+      }
+      if (initiatorId) {
+        session.participants.add(initiatorId);
+      }
+
       const chat = db.chats.find(c => c.id === chatId);
-      if (chat) {
-        // Prevent duplicate spam messages within 60 seconds
-        const recentCallMsg = (db.messages || []).find(m => m.chatId === chatId && m.type === 'voice_chat_start' && (Date.now() - m.timestamp < 60000));
+      if (chat && isNewSession) {
+        // Prevent duplicate spam messages within 15 seconds
+        const recentCallMsg = (db.messages || []).find(m => m.chatId === chatId && m.type === 'voice_chat_start' && (Date.now() - m.timestamp < 15000));
         if (!recentCallMsg) {
           const newMsg = {
             id: 'msg_' + uuidv4(),
@@ -1621,12 +1757,38 @@ io.on('connection', (socket) => {
 
   socket.on('voice_chat_join', ({ chatId, user }) => {
     socket.join(`voice_room_${chatId}`);
+    if (chatId && user?.id) {
+      let session = activeGroupVoiceChats.get(chatId);
+      if (!session) {
+        session = { startedAt: Date.now(), initiatorId: user.id, participants: new Set() };
+        activeGroupVoiceChats.set(chatId, session);
+      }
+      session.participants.add(user.id);
+    }
     io.to(`voice_room_${chatId}`).emit('voice_chat_user_joined', { chatId, user });
   });
 
   socket.on('voice_chat_leave', ({ chatId, userId }) => {
     socket.leave(`voice_room_${chatId}`);
+    if (chatId && userId) {
+      const session = activeGroupVoiceChats.get(chatId);
+      if (session) {
+        session.participants.delete(userId);
+      }
+    }
     io.to(`voice_room_${chatId}`).emit('voice_chat_user_left', { chatId, userId });
+    finishGroupVoiceChatIfEmpty(chatId, userId);
+  });
+
+  socket.on('voice_chat_end', ({ chatId, userId }) => {
+    if (!chatId) return;
+    socket.leave(`voice_room_${chatId}`);
+    const session = activeGroupVoiceChats.get(chatId);
+    if (session) {
+      session.participants.clear();
+    }
+    io.to(`voice_room_${chatId}`).emit('voice_chat_ended', { chatId });
+    finishGroupVoiceChatIfEmpty(chatId, userId);
   });
 
   socket.on('voice_chat_invite', ({ chatId, chatName, inviterName, inviterId, targetUserId }) => {
@@ -1706,6 +1868,13 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const userId = socketToUser.get(socket.id);
     if (userId) {
+      activeGroupVoiceChats.forEach((session, cId) => {
+        if (session.participants.has(userId)) {
+          session.participants.delete(userId);
+          io.to(`voice_room_${cId}`).emit('voice_chat_user_left', { chatId: cId, userId });
+          finishGroupVoiceChatIfEmpty(cId, userId);
+        }
+      });
       voiceRoomScreenShares.forEach((roomShares, cId) => {
         if (roomShares.has(userId)) {
           roomShares.delete(userId);

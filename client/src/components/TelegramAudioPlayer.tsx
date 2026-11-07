@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Download, Sparkles, Loader2 } from 'lucide-react';
+import { resolveMediaUrl } from '../utils/avatar';
 
 interface TelegramAudioPlayerProps {
   src: string;
@@ -26,6 +27,7 @@ export const TelegramAudioPlayer: React.FC<TelegramAudioPlayerProps> = ({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [localTranscribed, setLocalTranscribed] = useState(transcribedText);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const resolvedSrc = resolveMediaUrl(src);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -83,7 +85,8 @@ export const TelegramAudioPlayer: React.FC<TelegramAudioPlayerProps> = ({
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
     const a = document.createElement('a');
-    a.href = src;
+    a.href = resolvedSrc;
+    a.target = '_blank';
     a.download = title || `audio_${Date.now()}.mp3`;
     document.body.appendChild(a);
     a.click();
@@ -111,7 +114,7 @@ export const TelegramAudioPlayer: React.FC<TelegramAudioPlayerProps> = ({
           isOutgoing ? 'bg-black/5 dark:bg-blue-600/20' : 'bg-black/5 dark:bg-[#182533]/80'
         } border border-black/5 dark:border-white/5 transition`}
       >
-        <audio ref={audioRef} src={src} preload="metadata" />
+        <audio ref={audioRef} src={resolvedSrc} preload="metadata" />
 
         {/* Play/Pause Button */}
         <button

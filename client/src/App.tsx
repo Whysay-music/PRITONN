@@ -210,15 +210,12 @@ export const App: React.FC = () => {
       }
 
       // Check if message belongs to active chat
-      setActiveChat((currentActive) => {
-        if (currentActive && currentActive.id === msg.chatId) {
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === msg.id)) return prev;
-            return [...prev, msg];
-          });
-        }
-        return currentActive;
-      });
+      if (activeChatRef.current && activeChatRef.current.id === msg.chatId) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
+      }
 
       // Update chats list
       setChats((prevChats) => {
@@ -712,8 +709,10 @@ export const App: React.FC = () => {
       return;
     }
 
+    const targetChatId = activeChat.id;
+
     try {
-      await fetch(`${API_BASE_URL}/api/chats/${activeChat.id}/messages`, {
+      const res = await fetch(`${API_BASE_URL}/api/chats/${targetChatId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -721,6 +720,20 @@ export const App: React.FC = () => {
           ...data,
         }),
       });
+      if (res.ok) {
+        const savedMsg: Message = await res.json();
+        if (activeChatRef.current?.id === targetChatId) {
+          setMessages((prev) => (prev.some((m) => m.id === savedMsg.id) ? prev : [...prev, savedMsg]));
+        }
+        setChats((prev) =>
+          prev.map((c) => (c.id === targetChatId ? { ...c, lastMessage: savedMsg } : c))
+        );
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        if (errData?.error) {
+          alert(errData.error);
+        }
+      }
     } catch (err) {
       console.error('Error sending message:', err);
     }
@@ -1094,7 +1107,7 @@ export const App: React.FC = () => {
 
   if (isInitializing) {
     return (
-      <div className="w-screen h-screen flex items-center justify-center bg-[#0e1621] text-white">
+      <div className="w-full h-[100dvh] flex items-center justify-center bg-[#0e1621] text-white">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
           <p className="text-sm text-slate-400 font-medium">Загрузка PRITONN...</p>
@@ -1115,7 +1128,7 @@ export const App: React.FC = () => {
   const isTargetBlocked = !!(otherUserId && currentUser.blockedUserIds?.includes(otherUserId));
 
   return (
-    <div className="w-screen h-screen flex flex-col overflow-hidden bg-[var(--tg-bg)] text-[var(--tg-text)] font-sans antialiased">
+    <div className="w-full h-[100dvh] flex flex-col overflow-hidden bg-[var(--tg-bg)] text-[var(--tg-text)] font-sans antialiased">
       {/* Desktop Window Title Bar */}
       <div className="hidden md:block">
         <DesktopTitleBar activeChat={activeChat} currentUser={currentUser} allUsers={allUsers} />

@@ -19,13 +19,21 @@ import {
   Video,
   VideoOff,
   Tv,
-  Sparkles,
+  Wand2,
+  Headphones,
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { Chat, User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { isUserVerified } from '../utils/verified';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import { VoiceEffectType, AVAILABLE_VOICE_EFFECTS, applyVoiceEffect } from '../utils/audioEffects';
+import { ScreenSharePickerModal, DesktopSource } from './ScreenSharePickerModal';
+import {
+  hasNativeAndroidScreenShare,
+  startNativeAndroidScreenShare,
+  MobileScreenShareSession,
+} from '../utils/mobileScreenShare';
 
 export interface GroupParticipant {
   user: User;
@@ -67,11 +75,15 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteSearchQuery, setInviteSearchQuery] = useState('');
-  const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
   const [invitedUserIds, setInvitedUserIds] = useState<Set<string>>(new Set());
   const [visualizerHeights, setVisualizerHeights] = useState<number[]>([
     8, 14, 10, 18, 12, 16, 20, 14, 18, 15, 10, 19,
   ]);
+  const [selectedVoiceEffect, setSelectedVoiceEffect] = useState<VoiceEffectType>('normal');
+  const [isVoiceEffectsOpen, setIsVoiceEffectsOpen] = useState(false);
+  const [isVoiceMonitorOn, setIsVoiceMonitorOn] = useState(false);
+  const [isScreenPickerOpen, setIsScreenPickerOpen] = useState(false);
+  const [desktopSources, setDesktopSources] = useState<DesktopSource[]>([]);
 
   const modalContainerRef = useRef<HTMLDivElement>(null);
   const screenVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -80,6 +92,59 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   const screenStreamRef = useRef<MediaStream | null>(null);
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const effectAudioCtxRef = useRef<AudioContext | null>(null);
+  const effectCleanupRef = useRef<(() => void) | null>(null);
+  const mobileScreenSessionRef = useRef<MobileScreenShareSession | null>(null);
+
+  const applyGroupVoiceEffect = useCallback(
+    async (effect: VoiceEffectType, monitorEnabled: boolean) => {
+      if (effectCleanupRef.current) {
+        effectCleanupRef.current();
+        effectCleanupRef.current = null;
+      }
+      if (!localStreamRef.current || localStreamRef.current.getAudioTracks().length === 0) return;
+      if (effect === 'normal' && !monitorEnabled) return;
+
+      try {
+        if (!effectAudioCtxRef.current || effectAudioCtxRef.current.state === 'closed') {
+          const AudioContextClass =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          effectAudioCtxRef.current = new AudioContextClass();
+        }
+        const ctx = effectAudioCtxRef.current;
+        if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+
+        const rawTrack = localStreamRef.current.getAudioTracks()[0];
+        const source = ctx.createMediaStreamSource(new MediaStream([rawTrack]));
+        const busGain = ctx.createGain();
+        busGain.gain.value = 1.0;
+        const cleanup = applyVoiceEffect(ctx, source, busGain, effect);
+        const dest = ctx.createMediaStreamDestination();
+        busGain.connect(dest);
+
+        let monGain: GainNode | null = null;
+        if (monitorEnabled) {
+          monGain = ctx.createGain();
+          monGain.gain.value = 0.85;
+          busGain.connect(monGain);
+          monGain.connect(ctx.destination);
+        }
+
+        effectCleanupRef.current = () => {
+          cleanup();
+          try { source.disconnect(); } catch {}
+          try { busGain.disconnect(); } catch {}
+          if (monGain) {
+            try { monGain.disconnect(); } catch {}
+          }
+        };
+      } catch (err) {
+        console.warn('Group voice effect error:', err);
+      }
+    },
+    []
+  );
 
   // Participants list (starts strictly with current user; invited members show in ringing state until joined)
   const [roomParticipants, setRoomParticipants] = useState<GroupParticipant[]>([]);
@@ -377,106 +442,16 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
     };
   }, [socket, chat, currentUser, allUsers, isScreenSharing]);
 
-  // Screen Sharing Toggle with full Window/Screen/Tab support and frame streaming
-  const handleToggleScreenShare = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!isScreenSharing) {
-      try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            cursor: 'always',
-            displaySurface: undefined,
-          } as any,
-          audio: true,
-          selfBrowserSurface: 'include',
-          surfaceSwitching: 'include',
-          systemAudio: 'include',
-        } as any);
-
-        screenStreamRef.current = screenStream;
-        setIsScreenSharing(true);
-        setIsMinimized(false);
-
-        if (screenVideoRef.current) {
-          screenVideoRef.current.srcObject = screenStream;
-          screenVideoRef.current.play().catch(() => {});
-        }
-
-        // Live high-speed canvas frame streaming for all group participants
-        const captureVideo = document.createElement('video');
-        captureVideo.muted = true;
-        captureVideo.autoplay = true;
-        captureVideo.playsInline = true;
-        captureVideo.srcObject = screenStream;
-        captureVideo.play().catch(() => {});
-
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-
-        if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
-        frameIntervalRef.current = setInterval(() => {
-          if (!screenStreamRef.current || screenStreamRef.current.getVideoTracks().length === 0 || screenStreamRef.current.getVideoTracks()[0].readyState !== 'live') {
-            stopScreenSharing();
-            return;
-          }
-          if (captureVideo.videoWidth > 0 && captureVideo.videoHeight > 0) {
-            const maxDim = 1280;
-            let w = captureVideo.videoWidth;
-            let h = captureVideo.videoHeight;
-            if (w > maxDim || h > maxDim) {
-              if (w > h) {
-                h = Math.round((h * maxDim) / w);
-                w = maxDim;
-              } else {
-                w = Math.round((w * maxDim) / h);
-                h = maxDim;
-              }
-            }
-            canvas.width = w;
-            canvas.height = h;
-            if (ctx) {
-              ctx.drawImage(captureVideo, 0, 0, w, h);
-              const frameData = canvas.toDataURL('image/jpeg', 0.65);
-              if (socket && chat && currentUser) {
-                socket.emit('voice_chat_screen_frame', {
-                  chatId: chat.id,
-                  frame: frameData,
-                  sharerId: currentUser.id,
-                  sharerName: currentUser.name,
-                });
-              }
-            }
-          }
-        }, 65);
-
-        if (socket && chat && currentUser) {
-          socket.emit('voice_chat_screen_share', {
-            chatId: chat.id,
-            isSharing: true,
-            sharerName: currentUser.name,
-            sharerId: currentUser.id,
-          });
-        }
-
-        const videoTrack = screenStream.getVideoTracks()[0];
-        if (videoTrack) {
-          videoTrack.onended = () => {
-            stopScreenSharing();
-          };
-        }
-      } catch (err) {
-        console.warn('Screen share canceled or error:', err);
-      }
-    } else {
-      stopScreenSharing();
-    }
-  };
-
   const stopScreenSharing = useCallback(() => {
     setIsScreenSharing(false);
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
       frameIntervalRef.current = null;
+    }
+    if (mobileScreenSessionRef.current) {
+      const session = mobileScreenSessionRef.current;
+      mobileScreenSessionRef.current = null;
+      session.stop();
     }
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -491,6 +466,182 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
       });
     }
   }, [socket, chat, currentUser]);
+
+  const startGroupScreenStream = async (screenStream: MediaStream, skipCanvasLoop = false) => {
+    screenStreamRef.current = screenStream;
+    setIsScreenSharing(true);
+    setIsMinimized(false);
+    setSelectedStreamId('local');
+
+    if (screenVideoRef.current) {
+      screenVideoRef.current.srcObject = screenStream;
+      screenVideoRef.current.play().catch(() => {});
+    }
+
+    if (!skipCanvasLoop) {
+      const captureVideo = document.createElement('video');
+      captureVideo.muted = true;
+      captureVideo.autoplay = true;
+      captureVideo.playsInline = true;
+      captureVideo.srcObject = screenStream;
+      captureVideo.play().catch(() => {});
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = setInterval(() => {
+        if (
+          !screenStreamRef.current ||
+          screenStreamRef.current.getVideoTracks().length === 0 ||
+          screenStreamRef.current.getVideoTracks()[0].readyState !== 'live'
+        ) {
+          stopScreenSharing();
+          return;
+        }
+        if (captureVideo.videoWidth > 0 && captureVideo.videoHeight > 0) {
+          const maxDim = 1280;
+          let w = captureVideo.videoWidth;
+          let h = captureVideo.videoHeight;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          if (ctx) {
+            ctx.drawImage(captureVideo, 0, 0, w, h);
+            const frameData = canvas.toDataURL('image/jpeg', 0.65);
+            if (socket && chat && currentUser) {
+              socket.emit('voice_chat_screen_frame', {
+                chatId: chat.id,
+                frame: frameData,
+                sharerId: currentUser.id,
+                sharerName: currentUser.name,
+              });
+            }
+          }
+        }
+      }, 85);
+    }
+
+    if (socket && chat && currentUser) {
+      socket.emit('voice_chat_screen_share', {
+        chatId: chat.id,
+        isSharing: true,
+        sharerName: currentUser.name,
+        sharerId: currentUser.id,
+      });
+    }
+
+    const videoTrack = screenStream.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.onended = () => {
+        stopScreenSharing();
+      };
+    }
+  };
+
+  // Screen Sharing Toggle across Electron PC, Android APK MediaProjection, Desktop Web, or Mobile Browser
+  const handleToggleScreenShare = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!isScreenSharing) {
+      const electronAPI = (window as unknown as { electronAPI?: { getDesktopSources?: () => Promise<DesktopSource[]> } }).electronAPI;
+      if (electronAPI && typeof electronAPI.getDesktopSources === 'function') {
+        try {
+          const sources = await electronAPI.getDesktopSources();
+          if (sources && sources.length > 0) {
+            setDesktopSources(sources);
+            setIsScreenPickerOpen(true);
+            return;
+          }
+        } catch {}
+      }
+
+      if (hasNativeAndroidScreenShare()) {
+        try {
+          const session = await startNativeAndroidScreenShare(
+            (frameData) => {
+              if (socket && chat && currentUser) {
+                socket.emit('voice_chat_screen_frame', {
+                  chatId: chat.id,
+                  frame: frameData,
+                  sharerId: currentUser.id,
+                  sharerName: currentUser.name,
+                });
+              }
+            },
+            () => {
+              stopScreenSharing();
+            }
+          );
+          mobileScreenSessionRef.current = session;
+          await startGroupScreenStream(session.stream, true);
+          return;
+        } catch (err) {
+          console.warn('Native Android group screen share canceled or failed:', err);
+          return;
+        }
+      }
+
+      if (navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function') {
+        try {
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: { cursor: 'always' } as any,
+            audio: true,
+          } as any);
+          await startGroupScreenStream(screenStream);
+          return;
+        } catch (err: any) {
+          if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') return;
+        }
+      }
+
+      try {
+        const rearStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+        await startGroupScreenStream(rearStream);
+      } catch {
+        alert(
+          'Для демонстрации экрана телефона используйте приложение PRITONN на Android и разрешите запись экрана.'
+        );
+      }
+    } else {
+      stopScreenSharing();
+    }
+  };
+
+  const handleSelectDesktopSource = async (source: DesktopSource) => {
+    setIsScreenPickerOpen(false);
+    try {
+      const screenStream = await (navigator.mediaDevices as any).getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: source.id,
+            minWidth: 1280,
+            maxWidth: 1920,
+            minHeight: 720,
+            maxHeight: 1080,
+          },
+        },
+      });
+      await startGroupScreenStream(screenStream);
+    } catch {
+      try {
+        const fallbackStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        await startGroupScreenStream(fallbackStream);
+      } catch {}
+    }
+  };
 
   // Fullscreen Stage
   const toggleFullscreen = (e?: React.MouseEvent) => {
@@ -531,6 +682,16 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
     e?.stopPropagation();
     if (isScreenSharing) {
       stopScreenSharing();
+    }
+    if (effectCleanupRef.current) {
+      effectCleanupRef.current();
+      effectCleanupRef.current = null;
+    }
+    if (effectAudioCtxRef.current) {
+      try {
+        effectAudioCtxRef.current.close();
+      } catch {}
+      effectAudioCtxRef.current = null;
     }
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -667,44 +828,45 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   return (
     <div
       style={{ zIndex: 9990 }}
-      className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 select-none animate-fade-in"
+      className="fixed inset-0 h-[100dvh] bg-black/85 backdrop-blur-md flex items-center justify-center p-2.5 sm:p-4 safe-area-modal select-none animate-fade-in"
     >
       <div
         ref={modalContainerRef}
         className={`w-full transition-all duration-300 relative flex flex-col overflow-hidden border border-[#242f3d] shadow-2xl text-[#f5f5f5] ${
           isTheaterActive
             ? isFullscreen
-              ? 'fixed inset-0 z-50 rounded-none bg-black p-4'
-              : 'max-w-5xl h-[88vh] bg-[#17212b] rounded-3xl p-4 md:p-6'
-            : 'max-w-2xl h-[80vh] bg-[#17212b] rounded-3xl p-5 md:p-6 animate-pop-in'
+              ? 'fixed inset-0 z-50 rounded-none bg-black p-3 sm:p-4 safe-area-modal'
+              : 'max-w-5xl h-[90dvh] max-h-[92dvh] bg-[#17212b] rounded-3xl p-3 sm:p-5'
+            : 'max-w-2xl h-[86dvh] max-h-[90dvh] bg-[#17212b] rounded-3xl p-4 sm:p-6 animate-pop-in'
         }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between pb-3.5 border-b border-[#242f3d] flex-shrink-0 mb-3">
-          <div className="flex items-center gap-3">
-            <div className="relative">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#242f3d] flex-shrink-0 mb-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="relative flex-shrink-0">
               <img
-                src={chatAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+                src={getAvatarUrl(chatAvatar, chatName)}
+                onError={(e) => handleAvatarError(e, chatName)}
                 alt={chatName}
-                className="w-10 h-10 rounded-full object-cover border-2 border-emerald-500 shadow-md"
+                className="w-9 h-9 sm:w-10 sm:h-10 rounded-full object-cover border-2 border-emerald-500 shadow-md"
               />
               <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-[#17212b] rounded-full animate-ping" />
             </div>
 
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-bold text-base leading-tight truncate max-w-xs">{chatName}</h3>
-                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h3 className="font-bold text-sm sm:text-base leading-tight truncate max-w-[150px] sm:max-w-xs">{chatName}</h3>
+                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  В ЭФИРЕ
+                  LIVE
                 </span>
                 <span className="text-xs text-emerald-400 font-mono font-medium">
                   {formatTime(seconds)}
                 </span>
               </div>
-              <p className="text-xs text-[#7f91a4] flex items-center gap-1.5 mt-0.5">
-                <Users size={12} />
-                <span>{roomParticipants.length} участников в голосовом звонке</span>
+              <p className="text-[11px] text-[#7f91a4] flex items-center gap-1 mt-0.5">
+                <Users size={11} />
+                <span>{roomParticipants.length} участн.</span>
               </p>
             </div>
           </div>
@@ -1112,79 +1274,171 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
           )}
         </div>
 
-        {/* BOTTOM CONTROL BAR */}
-        <div className="pt-3.5 border-t border-[#242f3d] flex items-center justify-between flex-shrink-0">
-          {/* Hand Raise Toggle */}
+        {/* Voice Changer Sheet */}
+        {isVoiceEffectsOpen && (
+          <div className="absolute inset-0 z-50 bg-[#17212b]/95 backdrop-blur-md rounded-3xl p-4 sm:p-5 flex flex-col animate-fade-in text-[#f5f5f5]">
+            <div className="flex items-center justify-between pb-3 border-b border-[#242f3d]">
+              <div className="flex items-center gap-2">
+                <Wand2 size={18} className="text-purple-400" />
+                <h3 className="font-semibold text-sm">Модуляция голоса</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsVoiceEffectsOpen(false)}
+                className="p-1.5 rounded-lg text-[#7f91a4] hover:text-white hover:bg-[#242f3d] transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="my-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !isVoiceMonitorOn;
+                  setIsVoiceMonitorOn(next);
+                  applyGroupVoiceEffect(selectedVoiceEffect, next);
+                }}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+                  isVoiceMonitorOn
+                    ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                    : 'bg-[#0e1621] border-[#242f3d] text-[#7f91a4] hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Headphones size={16} className={isVoiceMonitorOn ? 'text-emerald-400' : 'text-[#5288c1]'} />
+                  <span>Прослушать свой голос (самопроверка)</span>
+                </div>
+                <span>{isVoiceMonitorOn ? 'ВКЛ' : 'ВЫКЛ'}</span>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-2 pr-1 no-scrollbar min-h-0">
+              {AVAILABLE_VOICE_EFFECTS.map((eff) => (
+                <button
+                  key={eff.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedVoiceEffect(eff.id);
+                    setIsVoiceEffectsOpen(false);
+                    applyGroupVoiceEffect(eff.id, isVoiceMonitorOn);
+                  }}
+                  className={`flex items-center justify-between p-3 rounded-2xl transition cursor-pointer border ${
+                    selectedVoiceEffect === eff.id
+                      ? 'bg-purple-600/35 border-purple-400 text-white font-semibold shadow-lg'
+                      : 'bg-[#0e1621]/80 hover:bg-[#0e1621] border-white/5 text-zinc-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xl">{eff.icon}</span>
+                    <span className="text-xs sm:text-sm">{eff.name}</span>
+                  </div>
+                  {selectedVoiceEffect === eff.id && <Check size={16} className="text-purple-300" />}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* BOTTOM CONTROL BAR — Responsive & Wrapped so all buttons fit on phones */}
+        <div className="pt-3 border-t border-[#242f3d] flex flex-wrap items-center justify-center gap-2.5 sm:gap-3 flex-shrink-0">
           <button
             type="button"
             onClick={() => setIsHandRaised(!isHandRaised)}
-            className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl text-xs font-semibold transition border cursor-pointer ${
+            className={`w-11 h-11 sm:w-auto sm:px-3.5 sm:py-2.5 flex items-center justify-center gap-1.5 rounded-full sm:rounded-2xl text-xs font-semibold transition border cursor-pointer active:scale-95 ${
               isHandRaised
-                ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 shadow-amber-500/10'
-                : 'bg-[#0e1621] text-[#7f91a4] border-[#242f3d] hover:text-white'
+                ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                : 'bg-[#242f3d] text-[#f5f5f5] border-transparent hover:bg-[#2b394a]'
             }`}
+            title={isHandRaised ? 'Опустить руку' : 'Поднять руку'}
           >
-            <Hand size={16} />
-            <span className="hidden sm:inline">{isHandRaised ? 'Рука поднята' : 'Поднять руку'}</span>
+            <Hand size={18} />
+            <span className="hidden sm:inline">{isHandRaised ? 'Рука поднята' : 'Рука'}</span>
           </button>
 
-          {/* Central Control Cluster */}
-          <div className="flex items-center gap-3">
-            {/* Screen Share Button */}
-            <button
-              type="button"
-              onClick={(e) => handleToggleScreenShare(e)}
-              className={`p-3 rounded-full transition shadow-md cursor-pointer ${
-                isScreenSharing
-                  ? 'bg-emerald-600 text-white shadow-emerald-600/40'
-                  : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
-              }`}
-              title={isScreenSharing ? 'Остановить демонстрацию экрана' : 'Создать демонстрацию экрана'}
-            >
-              <MonitorUp size={20} />
-            </button>
+          <button
+            type="button"
+            onClick={() => setIsVideoEnabled(!isVideoEnabled)}
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
+              isVideoEnabled
+                ? 'bg-[#5288c1] text-white'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
+            }`}
+            title={isVideoEnabled ? 'Выключить камеру' : 'Включить камеру'}
+          >
+            {isVideoEnabled ? <Video size={19} /> : <VideoOff size={19} />}
+          </button>
 
-            {/* Central Big Mic Toggle */}
-            <button
-              type="button"
-              onClick={(e) => handleToggleMute(e)}
-              className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl transition transform hover:scale-105 active:scale-95 cursor-pointer ${
-                isMuted
-                  ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/30'
-                  : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/40 animate-pulse'
-              }`}
-              title={isMuted ? 'Включить микрофон' : 'Отключить микрофон'}
-            >
-              {isMuted ? <MicOff size={24} /> : <Mic size={24} />}
-            </button>
+          <button
+            type="button"
+            onClick={(e) => handleToggleScreenShare(e)}
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
+              isScreenSharing
+                ? 'bg-emerald-600 text-white shadow-emerald-600/40'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
+            }`}
+            title={isScreenSharing ? 'Остановить демонстрацию экрана' : 'Демонстрация экрана'}
+          >
+            <MonitorUp size={19} />
+          </button>
 
-            {/* Speaker Sound Toggle */}
-            <button
-              type="button"
-              onClick={(e) => handleToggleSpeaker(e)}
-              className={`p-3 rounded-full transition shadow-md cursor-pointer ${
-                !isSpeakerOn
-                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                  : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
-              }`}
-              title={isSpeakerOn ? 'Отключить динамик' : 'Включить динамик'}
-            >
-              {isSpeakerOn ? <Volume2 size={20} /> : <VolumeX size={20} />}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={(e) => handleToggleMute(e)}
+            className={`w-13 h-13 sm:w-14 sm:h-14 rounded-full flex items-center justify-center shadow-xl transition transform hover:scale-105 active:scale-95 cursor-pointer ${
+              isMuted
+                ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/30'
+                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/40'
+            }`}
+            title={isMuted ? 'Включить микрофон' : 'Отключить микрофон'}
+          >
+            {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
+          </button>
 
-          {/* Leave Voice Room Button */}
+          <button
+            type="button"
+            onClick={(e) => handleToggleSpeaker(e)}
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
+              !isSpeakerOn
+                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
+            }`}
+            title={isSpeakerOn ? 'Отключить динамик' : 'Включить динамик'}
+          >
+            {isSpeakerOn ? <Volume2 size={19} /> : <VolumeX size={19} />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsVoiceEffectsOpen(true)}
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer relative active:scale-95 ${
+              selectedVoiceEffect !== 'normal' || isVoiceMonitorOn
+                ? 'bg-purple-600 text-white ring-2 ring-purple-400'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
+            }`}
+            title="Модуляция голоса"
+          >
+            <Wand2 size={19} />
+          </button>
+
           <button
             type="button"
             onClick={(e) => handleLeaveRoom(e)}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition shadow-md shadow-rose-600/30 cursor-pointer active:scale-95"
+            className="w-11 h-11 sm:w-auto sm:px-4 sm:py-2.5 flex items-center justify-center gap-1.5 rounded-full sm:rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition shadow-md shadow-rose-600/30 cursor-pointer active:scale-95"
             title="Завершить / выйти из голосового чата"
           >
-            <PhoneOff size={15} />
+            <PhoneOff size={17} />
             <span className="hidden sm:inline">Выйти</span>
           </button>
         </div>
       </div>
+
+      <ScreenSharePickerModal
+        isOpen={isScreenPickerOpen}
+        sources={desktopSources}
+        onSelectSource={handleSelectDesktopSource}
+        onClose={() => setIsScreenPickerOpen(false)}
+      />
     </div>
   );
 };

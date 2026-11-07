@@ -19,6 +19,8 @@ import {
   X,
   Radio,
   Wand2,
+  RefreshCw,
+  Headphones,
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { Chat, User } from '../types';
@@ -27,6 +29,11 @@ import { isUserVerified } from '../utils/verified';
 import { ScreenSharePickerModal, DesktopSource } from './ScreenSharePickerModal';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 import { VoiceEffectType, AVAILABLE_VOICE_EFFECTS, applyVoiceEffect } from '../utils/audioEffects';
+import {
+  hasNativeAndroidScreenShare,
+  startNativeAndroidScreenShare,
+  MobileScreenShareSession,
+} from '../utils/mobileScreenShare';
 
 interface VoiceCallModalProps {
   chat: Chat | null;
@@ -66,6 +73,9 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
   const [isRemoteCameraActive, setIsRemoteCameraActive] = useState(false);
+  const [remoteCameraFrameUrl, setRemoteCameraFrameUrl] = useState<string | null>(null);
+  const [isRemoteCamWebRtcPlaying, setIsRemoteCamWebRtcPlaying] = useState(false);
+  const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('user');
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
   const [isViewingRemoteScreen, setIsViewingRemoteScreen] = useState(false);
@@ -94,35 +104,109 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   // Voice Changer & Background Blur states
   const [selectedVoiceEffect, setSelectedVoiceEffect] = useState<VoiceEffectType>('normal');
   const [isVoiceEffectsOpen, setIsVoiceEffectsOpen] = useState(false);
+  const [isVoiceMonitorOn, setIsVoiceMonitorOn] = useState(false);
   const [isBackgroundBlur, setIsBackgroundBlur] = useState(false);
   const effectAudioCtxRef = useRef<AudioContext | null>(null);
   const effectCleanupRef = useRef<(() => void) | null>(null);
+  const effectMonitorGainRef = useRef<GainNode | null>(null);
+  const rawMicStreamRef = useRef<MediaStream | null>(null);
+  const processedAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+  const mobileScreenSessionRef = useRef<MobileScreenShareSession | null>(null);
+  const camFrameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const applyEffectToStream = useCallback(
+    async (effect: VoiceEffectType, monitorEnabled: boolean) => {
+      if (effectCleanupRef.current) {
+        effectCleanupRef.current();
+        effectCleanupRef.current = null;
+      }
+      if (effectMonitorGainRef.current) {
+        try { effectMonitorGainRef.current.disconnect(); } catch {}
+        effectMonitorGainRef.current = null;
+      }
+
+      const baseMicStream = rawMicStreamRef.current || localStreamRef.current;
+      if (!baseMicStream || baseMicStream.getAudioTracks().length === 0) return;
+
+      const rawTrack = baseMicStream.getAudioTracks()[0];
+
+      if (effect === 'normal' && !monitorEnabled) {
+        processedAudioTrackRef.current = null;
+        rawTrack.enabled = !isMuted;
+        const pc = peerConnectionRef.current;
+        if (pc) {
+          const audioSender = pc.getSenders().find((s) => s.track?.kind === 'audio');
+          if (audioSender && audioSender.track !== rawTrack) {
+            await audioSender.replaceTrack(rawTrack).catch(() => {});
+          }
+        }
+        return;
+      }
+
+      try {
+        if (!effectAudioCtxRef.current || effectAudioCtxRef.current.state === 'closed') {
+          const AudioContextClass =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          effectAudioCtxRef.current = new AudioContextClass();
+        }
+        const ctx = effectAudioCtxRef.current;
+        if (ctx.state === 'suspended') {
+          await ctx.resume().catch(() => {});
+        }
+
+        const audioOnlyStream = new MediaStream([rawTrack]);
+        const source = ctx.createMediaStreamSource(audioOnlyStream);
+        const busGain = ctx.createGain();
+        busGain.gain.value = 1.0;
+        const destination = ctx.createMediaStreamDestination();
+
+        const cleanup = applyVoiceEffect(ctx, source, busGain, effect);
+        busGain.connect(destination);
+
+        if (monitorEnabled) {
+          const monitorGain = ctx.createGain();
+          monitorGain.gain.value = 0.85;
+          busGain.connect(monitorGain);
+          monitorGain.connect(ctx.destination);
+          effectMonitorGainRef.current = monitorGain;
+        }
+
+        effectCleanupRef.current = () => {
+          cleanup();
+          try { source.disconnect(); } catch {}
+          try { busGain.disconnect(); } catch {}
+        };
+
+        const modulatedTrack = destination.stream.getAudioTracks()[0];
+        if (modulatedTrack) {
+          modulatedTrack.enabled = !isMuted;
+          processedAudioTrackRef.current = modulatedTrack;
+          const pc = peerConnectionRef.current;
+          if (pc) {
+            const audioSender = pc.getSenders().find((s) => s.track?.kind === 'audio');
+            if (audioSender) {
+              await audioSender.replaceTrack(modulatedTrack).catch(() => {});
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error applying in-call voice effect:', err);
+      }
+    },
+    [isMuted]
+  );
 
   const handleSelectVoiceEffect = (effect: VoiceEffectType) => {
     setSelectedVoiceEffect(effect);
     setIsVoiceEffectsOpen(false);
+    applyEffectToStream(effect, isVoiceMonitorOn);
+  };
 
-    // Apply effect to local audio stream if active
-    if (effectCleanupRef.current) {
-      effectCleanupRef.current();
-      effectCleanupRef.current = null;
-    }
-
-    if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
-      try {
-        if (!effectAudioCtxRef.current || effectAudioCtxRef.current.state === 'closed') {
-          const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-          effectAudioCtxRef.current = new AudioContextClass();
-        }
-        const ctx = effectAudioCtxRef.current;
-        const source = ctx.createMediaStreamSource(localStreamRef.current);
-        const destination = ctx.createMediaStreamDestination();
-        const cleanup = applyVoiceEffect(ctx, source, destination, effect);
-        effectCleanupRef.current = cleanup;
-      } catch (err) {
-        console.error('Error applying in-call voice effect:', err);
-      }
-    }
+  const handleToggleVoiceMonitor = () => {
+    const next = !isVoiceMonitorOn;
+    setIsVoiceMonitorOn(next);
+    applyEffectToStream(selectedVoiceEffect, next);
   };
 
   const toggleCallRecording = () => {
@@ -163,7 +247,8 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     }
   };
 
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localScreenVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localCameraVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const modalContainerRef = useRef<HTMLDivElement>(null);
@@ -202,17 +287,23 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       ? '/telegram-saved.svg'
       : chat?.displayAvatar || chat?.avatar);
 
-  // Callback ref for local video: binds stream immediately upon mounting
-  const setLocalVideo = useCallback((node: HTMLVideoElement | null) => {
-    localVideoRef.current = node;
-    if (node) {
-      const stream = isScreenSharing ? screenStreamRef.current : localStreamRef.current;
-      if (stream) {
-        node.srcObject = stream;
-        node.play().catch(() => {});
-      }
+  // Callback ref for local screen share video
+  const setLocalScreenVideo = useCallback((node: HTMLVideoElement | null) => {
+    localScreenVideoRef.current = node;
+    if (node && screenStreamRef.current) {
+      node.srcObject = screenStreamRef.current;
+      node.play().catch(() => {});
     }
-  }, [isScreenSharing]);
+  }, []);
+
+  // Callback ref for local camera PiP video
+  const setLocalCameraVideo = useCallback((node: HTMLVideoElement | null) => {
+    localCameraVideoRef.current = node;
+    if (node && localStreamRef.current) {
+      node.srcObject = localStreamRef.current;
+      node.play().catch(() => {});
+    }
+  }, []);
 
   // Callback ref for remote video: binds stream immediately upon mounting
   const setRemoteVideo = useCallback((node: HTMLVideoElement | null) => {
@@ -225,6 +316,28 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       }
     }
   }, []);
+
+  // Keep video elements synced whenever camera/screen layout toggles
+  useEffect(() => {
+    if (localCameraVideoRef.current && localStreamRef.current && isVideoEnabled) {
+      if (localCameraVideoRef.current.srcObject !== localStreamRef.current) {
+        localCameraVideoRef.current.srcObject = localStreamRef.current;
+      }
+      localCameraVideoRef.current.play().catch(() => {});
+    }
+    if (localScreenVideoRef.current && screenStreamRef.current && isScreenSharing) {
+      if (localScreenVideoRef.current.srcObject !== screenStreamRef.current) {
+        localScreenVideoRef.current.srcObject = screenStreamRef.current;
+      }
+      localScreenVideoRef.current.play().catch(() => {});
+    }
+    if (remoteVideoRef.current && remoteVideoStreamRef.current) {
+      if (remoteVideoRef.current.srcObject !== remoteVideoStreamRef.current) {
+        remoteVideoRef.current.srcObject = remoteVideoStreamRef.current;
+      }
+      remoteVideoRef.current.play().catch(() => {});
+    }
+  }, [isVideoEnabled, isRemoteCameraActive, isScreenSharing, isViewingRemoteScreen]);
 
   // Callback ref for remote audio to guarantee immediate autoplay even if track arrived before DOM mount
   const setRemoteAudio = useCallback((node: HTMLAudioElement | null) => {
@@ -419,29 +532,83 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     return pc;
   }, [socket, targetUserId, stopRingtone, isSpeakerOn]);
 
-  // Acquire local media stream and bind to PeerConnection
+  const stopCameraFrameFallback = useCallback(() => {
+    if (camFrameIntervalRef.current) {
+      clearInterval(camFrameIntervalRef.current);
+      camFrameIntervalRef.current = null;
+    }
+  }, []);
+
+  const startCameraFrameFallback = useCallback(
+    (stream: MediaStream) => {
+      stopCameraFrameFallback();
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack) return;
+
+      const captureVideo = document.createElement('video');
+      captureVideo.muted = true;
+      captureVideo.autoplay = true;
+      captureVideo.playsInline = true;
+      captureVideo.srcObject = new MediaStream([videoTrack]);
+      captureVideo.play().catch(() => {});
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      camFrameIntervalRef.current = setInterval(() => {
+        if (!videoTrack || videoTrack.readyState !== 'live') {
+          stopCameraFrameFallback();
+          return;
+        }
+        if (captureVideo.videoWidth > 0 && captureVideo.videoHeight > 0 && ctx) {
+          const maxDim = 480;
+          let w = captureVideo.videoWidth;
+          let h = captureVideo.videoHeight;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          ctx.drawImage(captureVideo, 0, 0, w, h);
+          const frame = canvas.toDataURL('image/jpeg', 0.55);
+          if (socket && targetUserId && currentUser) {
+            socket.emit('call_camera_frame', {
+              targetUserId,
+              frame,
+              senderId: currentUser.id,
+            });
+          }
+        }
+      }, 125);
+    },
+    [socket, targetUserId, currentUser, stopCameraFrameFallback]
+  );
+
+  // Acquire local audio media stream on call startup
   const setupLocalMedia = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video: isVideoEnabled
-          ? {
-              facingMode: 'user',
-              width: { ideal: 1280, max: 1920 },
-              height: { ideal: 720, max: 1080 },
-            }
-          : false,
-      });
-      localStreamRef.current = stream;
-
-      if (localVideoRef.current && isVideoEnabled && !isScreenSharing) {
-        localVideoRef.current.srcObject = stream;
-        localVideoRef.current.play().catch(() => {});
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       }
+
+      localStreamRef.current = stream;
+      rawMicStreamRef.current = new MediaStream(stream.getAudioTracks());
 
       try {
         const AudioCtx =
@@ -475,7 +642,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       console.warn('Microphone permission not granted or solo test:', err);
       return null;
     }
-  }, [isVideoEnabled, isScreenSharing]);
+  }, []);
 
   // Start Call Flow & Socket Listeners
   useEffect(() => {
@@ -492,7 +659,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
           callerVerified: isUserVerified(currentUser),
           targetUserId,
           chatId: chat?.id,
-          isVideo: isVideoEnabled,
+          isVideo: false,
         });
       }
 
@@ -501,16 +668,17 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
           stopRingtone();
           setStatus('no_answer');
           if (socket && targetUserId && currentUser) {
-            socket.emit('end_call', {
-              targetUserId,
+            socket.emit('call_end', {
               callerId: currentUser.id,
+              targetUserId,
+              duration: 0,
               status: 'missed',
               chatId: chat?.id,
             });
           }
           setTimeout(() => {
-            handleEndCall();
-          }, 2500);
+            onClose();
+          }, 2200);
         }
       }, 28000);
     } else {
@@ -523,8 +691,18 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     setupLocalMedia().then((stream) => {
       if (stream) {
         const pc = initPeerConnection();
+        const senders = pc.getSenders();
         stream.getTracks().forEach((track) => {
-          pc.addTrack(track, stream);
+          const trackToSend =
+            track.kind === 'audio' && processedAudioTrackRef.current
+              ? processedAudioTrackRef.current
+              : track;
+          const alreadyAdded = senders.some((s) => s.track?.kind === trackToSend.kind);
+          if (!alreadyAdded) {
+            try {
+              pc.addTrack(trackToSend, stream);
+            } catch {}
+          }
         });
       }
     });
@@ -557,11 +735,15 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         try {
           if (localStreamRef.current) {
             localStreamRef.current.getTracks().forEach((track) => {
+              const trackToSend =
+                track.kind === 'audio' && processedAudioTrackRef.current
+                  ? processedAudioTrackRef.current
+                  : track;
               const senders = pc.getSenders();
-              const existingSender = senders.find((s) => s.track && s.track.id === track.id);
+              const existingSender = senders.find((s) => s.track && s.track.kind === trackToSend.kind);
               if (!existingSender) {
                 try {
-                  pc.addTrack(track, localStreamRef.current!);
+                  pc.addTrack(trackToSend, localStreamRef.current!);
                 } catch {}
               }
             });
@@ -569,7 +751,6 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-          // Flush queued candidates
           while (pendingCandidatesRef.current.length > 0) {
             const cand = pendingCandidatesRef.current.shift();
             if (cand) {
@@ -596,7 +777,6 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-          // Flush queued candidates
           while (pendingCandidatesRef.current.length > 0) {
             const cand = pendingCandidatesRef.current.shift();
             if (cand) {
@@ -643,7 +823,6 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
       const handleScreenStreamFrame = ({
         frame,
-        senderId,
         senderName,
       }: {
         frame: string;
@@ -652,15 +831,22 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       }) => {
         setRemoteFrameDataUrl(frame);
         setIsRemoteScreenSharing(true);
+        setIsViewingRemoteScreen(true);
         if (senderName) {
           setRemoteScreenSenderName(senderName);
         }
       };
 
+      const handleCameraFrame = ({ frame }: { frame: string; senderId?: string }) => {
+        setRemoteCameraFrameUrl(frame);
+        setIsRemoteCameraActive(true);
+      };
+
       const handleRejected = () => {
         clearTimeout(callTimeoutTimer);
         stopRingtone();
-        onClose();
+        setStatus('declined');
+        setTimeout(() => onClose(), 900);
       };
 
       const handleEnded = () => {
@@ -677,6 +863,10 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         isVideo: boolean;
       }) => {
         setIsRemoteCameraActive(isVideo);
+        if (!isVideo) {
+          setRemoteCameraFrameUrl(null);
+          setIsRemoteCamWebRtcPlaying(false);
+        }
       };
 
       socket.on('call_accepted', handleAccepted);
@@ -684,6 +874,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       socket.on('webrtc_answer', handleAnswer);
       socket.on('webrtc_ice_candidate', handleIceCandidate);
       socket.on('call_camera_status', handleCameraStatus);
+      socket.on('call_camera_frame', handleCameraFrame);
       socket.on('call_screen_share_status', handleScreenShareStatus);
       socket.on('screen_stream_frame', handleScreenStreamFrame);
       socket.on('call_rejected', handleRejected);
@@ -697,6 +888,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         socket.off('webrtc_answer', handleAnswer);
         socket.off('webrtc_ice_candidate', handleIceCandidate);
         socket.off('call_camera_status', handleCameraStatus);
+        socket.off('call_camera_frame', handleCameraFrame);
         socket.off('call_screen_share_status', handleScreenShareStatus);
         socket.off('screen_stream_frame', handleScreenStreamFrame);
         socket.off('call_rejected', handleRejected);
@@ -709,7 +901,6 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     targetUserId,
     isIncomingAccepted,
     chat?.id,
-    isVideoEnabled,
     playRingtone,
     stopRingtone,
     playConnectChime,
@@ -729,7 +920,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     return () => clearInterval(interval);
   }, [status]);
 
-  // Mute Mic
+  // Mute Mic (including raw + modulated voice tracks)
   const handleToggleMute = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     const nextMuted = !isMuted;
@@ -738,6 +929,14 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       localStreamRef.current.getAudioTracks().forEach((track) => {
         track.enabled = !nextMuted;
       });
+    }
+    if (rawMicStreamRef.current) {
+      rawMicStreamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = !nextMuted;
+      });
+    }
+    if (processedAudioTrackRef.current) {
+      processedAudioTrackRef.current.enabled = !nextMuted;
     }
   };
 
@@ -751,6 +950,22 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     }
   };
 
+  // Find or attach video sender safely without touching audio sender
+  const replaceOrAddVideoTrack = async (pc: RTCPeerConnection, track: MediaStreamTrack | null, stream?: MediaStream) => {
+    const senders = pc.getSenders();
+    const videoSender =
+      senders.find((s) => s.track?.kind === 'video') ||
+      pc.getTransceivers().find((t) => t.receiver?.track?.kind === 'video')?.sender;
+
+    if (videoSender) {
+      await videoSender.replaceTrack(track).catch(() => {});
+    } else if (track && stream) {
+      try {
+        pc.addTrack(track, stream);
+      } catch {}
+    }
+  };
+
   // Stop Screen Share
   const stopScreenSharing = useCallback(async () => {
     setIsScreenSharing(false);
@@ -758,21 +973,25 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       clearInterval(frameIntervalRef.current);
       frameIntervalRef.current = null;
     }
+    if (mobileScreenSessionRef.current) {
+      const session = mobileScreenSessionRef.current;
+      mobileScreenSessionRef.current = null;
+      session.stop();
+    }
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach((t) => t.stop());
       screenStreamRef.current = null;
     }
     if (peerConnectionRef.current) {
-      const senders = peerConnectionRef.current.getSenders();
-      const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
-      if (videoSender) {
-        if (isVideoEnabled && localStreamRef.current) {
-          const camTrack = localStreamRef.current.getVideoTracks()[0] || null;
-          await videoSender.replaceTrack(camTrack).catch(() => {});
-        } else {
-          await videoSender.replaceTrack(null).catch(() => {});
-        }
-      }
+      const camTrack =
+        isVideoEnabled && localStreamRef.current
+          ? localStreamRef.current.getVideoTracks()[0] || null
+          : null;
+      await replaceOrAddVideoTrack(
+        peerConnectionRef.current,
+        camTrack,
+        localStreamRef.current || undefined
+      );
     }
     if (socket && targetUserId && currentUser) {
       socket.emit('call_screen_share', {
@@ -784,83 +1003,108 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     }
   }, [isVideoEnabled, socket, targetUserId, currentUser]);
 
-  // Camera Video toggle with real WebRTC track streaming & renegotiation
+  // Helper to acquire camera with multi-step hardware fallback
+  const openCameraWithMode = async (mode: 'user' | 'environment') => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach((t) => {
+        t.stop();
+        localStreamRef.current?.removeTrack(t);
+      });
+    }
+
+    let camStream: MediaStream | null = null;
+    const attempts: MediaStreamConstraints[] = [
+      {
+        video: {
+          facingMode: { ideal: mode },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      },
+      { video: { facingMode: mode }, audio: false },
+      { video: true, audio: false },
+    ];
+
+    let lastErr: unknown = null;
+    for (const constraints of attempts) {
+      try {
+        camStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (camStream && camStream.getVideoTracks().length > 0) break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+
+    if (!camStream || camStream.getVideoTracks().length === 0) {
+      throw lastErr || new Error('Camera unavailable');
+    }
+
+    const newVideoTrack = camStream.getVideoTracks()[0];
+    newVideoTrack.enabled = true;
+
+    if (localStreamRef.current) {
+      localStreamRef.current.addTrack(newVideoTrack);
+    } else {
+      localStreamRef.current = camStream;
+    }
+
+    if (localCameraVideoRef.current) {
+      localCameraVideoRef.current.srcObject = localStreamRef.current;
+      localCameraVideoRef.current.play().catch(() => {});
+    }
+
+    startCameraFrameFallback(localStreamRef.current);
+
+    if (!isScreenSharing) {
+      const pc = initPeerConnection();
+      await replaceOrAddVideoTrack(pc, newVideoTrack, localStreamRef.current);
+
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        if (socket && targetUserId) {
+          socket.emit('webrtc_offer', {
+            targetUserId,
+            sdp: offer,
+          });
+        }
+      } catch (err) {
+        console.warn('Renegotiation offer error on camera toggle:', err);
+      }
+    }
+
+    if (socket && targetUserId && currentUser) {
+      socket.emit('call_camera_status', {
+        callerId: currentUser.id,
+        callerName: currentUser.name,
+        targetUserId,
+        isVideo: true,
+      });
+    }
+  };
+
+  // Camera Video toggle with real WebRTC track streaming & frame fallback
   const handleToggleCamera = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     const nextVideoState = !isVideoEnabled;
-    setIsVideoEnabled(nextVideoState);
 
     if (nextVideoState) {
+      setIsVideoEnabled(true);
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'user',
-            width: { ideal: 1280, max: 1920 },
-            height: { ideal: 720, max: 1080 },
-          },
-        });
-
-        const newVideoTrack = stream.getVideoTracks()[0];
-        if (!newVideoTrack) return;
-
-        if (localStreamRef.current) {
-          const oldVideoTracks = localStreamRef.current.getVideoTracks();
-          oldVideoTracks.forEach((t) => {
-            t.stop();
-            localStreamRef.current?.removeTrack(t);
-          });
-          localStreamRef.current.addTrack(newVideoTrack);
-        } else {
-          localStreamRef.current = stream;
-        }
-
-        if (localVideoRef.current && !isScreenSharing) {
-          localVideoRef.current.srcObject = localStreamRef.current;
-          localVideoRef.current.play().catch(() => {});
-        }
-
-        const pc = initPeerConnection();
-        const senders = pc.getSenders();
-        const videoSender =
-          senders.find((s) => s.track && s.track.kind === 'video') ||
-          senders.find((s) => !s.track);
-        if (videoSender) {
-          await videoSender.replaceTrack(newVideoTrack).catch(() => {});
-        } else {
-          try {
-            pc.addTrack(newVideoTrack, localStreamRef.current || stream);
-          } catch {}
-        }
-
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          if (socket && targetUserId) {
-            socket.emit('webrtc_offer', {
-              targetUserId,
-              sdp: offer,
-            });
-          }
-        } catch (err) {
-          console.warn('Renegotiation offer error on camera toggle:', err);
-        }
-
-        if (socket && targetUserId && currentUser) {
-          socket.emit('call_camera_status', {
-            callerId: currentUser.id,
-            callerName: currentUser.name,
-            targetUserId,
-            isVideo: true,
-          });
-        }
-      } catch (err: any) {
+        await openCameraWithMode(cameraFacingMode);
+      } catch (err) {
         console.warn('Camera permission or error:', err);
         setIsVideoEnabled(false);
+        stopCameraFrameFallback();
         alert(
-          'Не удалось получить доступ к видеокамере. Проверьте разрешения в настройках вашего устройства.'
+          'Не удалось включить видеокамеру. Проверьте разрешение на доступ к камере в настройках приложения.'
         );
       }
     } else {
+      setIsVideoEnabled(false);
+      stopCameraFrameFallback();
+
       if (localStreamRef.current) {
         localStreamRef.current.getVideoTracks().forEach((t) => {
           t.stop();
@@ -868,13 +1112,8 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         });
       }
 
-      if (peerConnectionRef.current) {
-        const senders = peerConnectionRef.current.getSenders();
-        const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
-        if (videoSender) {
-          await videoSender.replaceTrack(null).catch(() => {});
-        }
-
+      if (peerConnectionRef.current && !isScreenSharing) {
+        await replaceOrAddVideoTrack(peerConnectionRef.current, null);
         try {
           const offer = await peerConnectionRef.current.createOffer();
           await peerConnectionRef.current.setLocalDescription(offer);
@@ -898,80 +1137,87 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     }
   };
 
+  // Switch between front and rear camera on mobile
+  const handleSwitchCamera = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const nextMode = cameraFacingMode === 'user' ? 'environment' : 'user';
+    setCameraFacingMode(nextMode);
+    if (isVideoEnabled) {
+      try {
+        await openCameraWithMode(nextMode);
+      } catch (err) {
+        console.warn('Switch camera error:', err);
+      }
+    }
+  };
+
   // Stream setup helper for both full screen & individual window selection
-  const startStreamWithMedia = async (screenStream: MediaStream) => {
+  const startStreamWithMedia = async (screenStream: MediaStream, skipCanvasLoop = false) => {
     screenStreamRef.current = screenStream;
     setIsScreenSharing(true);
     setIsMinimized(false);
 
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = screenStream;
-      localVideoRef.current.play().catch(() => {});
+    if (localScreenVideoRef.current) {
+      localScreenVideoRef.current.srcObject = screenStream;
+      localScreenVideoRef.current.play().catch(() => {});
     }
 
-    // 100% Reliable, Zero Black Screen Canvas Frame Streaming Engine
-    const captureVideo = document.createElement('video');
-    captureVideo.muted = true;
-    captureVideo.autoplay = true;
-    captureVideo.playsInline = true;
-    captureVideo.srcObject = screenStream;
-    captureVideo.play().catch(() => {});
+    if (!skipCanvasLoop) {
+      const captureVideo = document.createElement('video');
+      captureVideo.muted = true;
+      captureVideo.autoplay = true;
+      captureVideo.playsInline = true;
+      captureVideo.srcObject = screenStream;
+      captureVideo.play().catch(() => {});
 
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
 
-    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
-    frameIntervalRef.current = setInterval(() => {
-      if (
-        !screenStreamRef.current ||
-        screenStreamRef.current.getVideoTracks().length === 0 ||
-        screenStreamRef.current.getVideoTracks()[0].readyState !== 'live'
-      ) {
-        stopScreenSharing();
-        return;
-      }
-      if (captureVideo.videoWidth > 0 && captureVideo.videoHeight > 0) {
-        const maxDim = 1280;
-        let w = captureVideo.videoWidth;
-        let h = captureVideo.videoHeight;
-        if (w > maxDim || h > maxDim) {
-          if (w > h) {
-            h = Math.round((h * maxDim) / w);
-            w = maxDim;
-          } else {
-            w = Math.round((w * maxDim) / h);
-            h = maxDim;
+      if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = setInterval(() => {
+        if (
+          !screenStreamRef.current ||
+          screenStreamRef.current.getVideoTracks().length === 0 ||
+          screenStreamRef.current.getVideoTracks()[0].readyState !== 'live'
+        ) {
+          stopScreenSharing();
+          return;
+        }
+        if (captureVideo.videoWidth > 0 && captureVideo.videoHeight > 0) {
+          const maxDim = 1280;
+          let w = captureVideo.videoWidth;
+          let h = captureVideo.videoHeight;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          if (ctx) {
+            ctx.drawImage(captureVideo, 0, 0, w, h);
+            const frameData = canvas.toDataURL('image/jpeg', 0.65);
+            if (socket && targetUserId && currentUser) {
+              socket.emit('screen_stream_frame', {
+                targetUserId,
+                frame: frameData,
+                senderId: currentUser.id,
+                senderName: currentUser.name,
+              });
+            }
           }
         }
-        canvas.width = w;
-        canvas.height = h;
-        if (ctx) {
-          ctx.drawImage(captureVideo, 0, 0, w, h);
-          const frameData = canvas.toDataURL('image/jpeg', 0.65);
-          if (socket && targetUserId && currentUser) {
-            socket.emit('screen_stream_frame', {
-              targetUserId,
-              frame: frameData,
-              senderId: currentUser.id,
-              senderName: currentUser.name,
-            });
-          }
-        }
-      }
-    }, 65);
+      }, 85);
+    }
 
     const pc = initPeerConnection();
     const videoTrack = screenStream.getVideoTracks()[0];
-    const senders = pc.getSenders();
-    const videoSender =
-      senders.find((s) => s.track && s.track.kind === 'video') ||
-      senders.find((s) => !s.track);
-    if (videoSender) {
-      await videoSender.replaceTrack(videoTrack).catch(() => {});
-    } else {
-      try {
-        pc.addTrack(videoTrack, screenStream);
-      } catch {}
+    if (videoTrack) {
+      await replaceOrAddVideoTrack(pc, videoTrack, screenStream);
     }
 
     try {
@@ -996,19 +1242,18 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       });
     }
 
-    const screenVideoTrack = screenStream.getVideoTracks()[0];
-    if (screenVideoTrack) {
-      screenVideoTrack.onended = () => {
+    if (videoTrack) {
+      videoTrack.onended = () => {
         stopScreenSharing();
       };
     }
   };
 
-  // Start Screen Share with window/screen selection modal on PC
+  // Start Screen Share across Electron PC, Android APK MediaProjection, Desktop Web, or Mobile Browser
   const handleToggleScreenShare = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!isScreenSharing) {
-      // Check if running inside Electron Desktop with source picker API
+      // 1. Electron Desktop Window / Screen Picker
       const electronAPI = (window as unknown as { electronAPI?: { getDesktopSources?: () => Promise<DesktopSource[]> } }).electronAPI;
       if (electronAPI && typeof electronAPI.getDesktopSources === 'function') {
         try {
@@ -1023,37 +1268,64 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         }
       }
 
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-        alert(
-          'Демонстрация экрана доступна на ПК (Windows / Web). На смартфонах Android можно просматривать трансляцию собеседника.'
-        );
-        return;
+      // 2. Native Android APK MediaProjection Bridge
+      if (hasNativeAndroidScreenShare()) {
+        try {
+          const session = await startNativeAndroidScreenShare(
+            (frameData) => {
+              if (socket && targetUserId && currentUser) {
+                socket.emit('screen_stream_frame', {
+                  targetUserId,
+                  frame: frameData,
+                  senderId: currentUser.id,
+                  senderName: currentUser.name,
+                });
+              }
+            },
+            () => {
+              stopScreenSharing();
+            }
+          );
+          mobileScreenSessionRef.current = session;
+          await startStreamWithMedia(session.stream, true);
+          return;
+        } catch (err: any) {
+          console.warn('Native Android screen share canceled or failed:', err);
+          return;
+        }
       }
 
-      try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            cursor: 'always',
-            displaySurface: undefined,
-          } as any,
-          audio: true,
-          selfBrowserSurface: 'include',
-          surfaceSwitching: 'include',
-          systemAudio: 'include',
-        } as any);
+      // 3. Standard Web Browser getDisplayMedia
+      if (navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function') {
+        try {
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+              cursor: 'always',
+            } as any,
+            audio: true,
+          } as any);
 
-        await startStreamWithMedia(screenStream);
-      } catch (err: any) {
-        console.warn('Screen share canceled or error:', err);
-        if (
-          err?.name === 'NotSupportedError' ||
-          err?.message?.includes('not supported') ||
-          err?.message?.includes('not implemented')
-        ) {
-          alert(
-            'Демонстрация экрана доступна на ПК (Windows / Web). На мобильном устройстве вы можете смотреть трансляцию собеседника.'
-          );
+          await startStreamWithMedia(screenStream);
+          return;
+        } catch (err: any) {
+          console.warn('getDisplayMedia error or canceled:', err);
+          if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
+            return;
+          }
         }
+      }
+
+      // 4. Mobile Web Browser fallback (share rear camera view when outside native APK)
+      try {
+        const rearStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+        await startStreamWithMedia(rearStream);
+      } catch {
+        alert(
+          'Для системной демонстрации экрана телефона используйте приложение PRITONN на Android и разрешите запись экрана.'
+        );
       }
     } else {
       stopScreenSharing();
@@ -1144,8 +1416,19 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const handleEndCall = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     stopRingtone();
+    stopCameraFrameFallback();
     if (isScreenSharing) {
       stopScreenSharing();
+    }
+    if (effectCleanupRef.current) {
+      effectCleanupRef.current();
+      effectCleanupRef.current = null;
+    }
+    if (effectAudioCtxRef.current) {
+      try {
+        effectAudioCtxRef.current.close();
+      } catch {}
+      effectAudioCtxRef.current = null;
     }
     if (socket && targetUserId && currentUser) {
       const actualCallerId = isIncomingAccepted ? targetUserId : currentUser.id;
@@ -1155,11 +1438,16 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         targetUserId: actualTargetUserId,
         duration: seconds,
         isVideo: isVideoEnabled || isScreenSharing,
+        chatId: chat?.id,
       });
     }
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
+    }
+    if (rawMicStreamRef.current) {
+      rawMicStreamRef.current.getTracks().forEach((t) => t.stop());
+      rawMicStreamRef.current = null;
     }
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -1205,12 +1493,13 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         <div
           onClick={() => setIsMinimized(false)}
           style={{ zIndex: 9999 }}
-          className="fixed top-3 left-1/2 -translate-x-1/2 bg-[#17212b]/95 hover:bg-[#202b36] border border-[#2b5278] hover:border-[#5288c1] backdrop-blur-md rounded-2xl px-4 py-2 shadow-2xl flex items-center gap-3.5 cursor-pointer transition-all duration-200 select-none group max-w-[95vw] animate-pop-in"
+          className="fixed top-3 left-1/2 -translate-x-1/2 bg-[#17212b]/95 hover:bg-[#202b36] border border-[#2b5278] hover:border-[#5288c1] backdrop-blur-md rounded-2xl px-3.5 py-2 shadow-2xl flex items-center gap-3 cursor-pointer transition-all duration-200 select-none group max-w-[94vw] animate-pop-in"
           title="Нажмите в любое место, чтобы вернуться к звонку"
         >
           <div className="relative flex-shrink-0">
             <img
-              src={targetAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+              src={getAvatarUrl(targetAvatar, targetName)}
+              onError={(e) => handleAvatarError(e, targetName)}
               alt={targetName}
               className="w-9 h-9 rounded-full object-cover border-2 border-emerald-500 shadow-sm"
             />
@@ -1241,7 +1530,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 ml-2" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-1.5 ml-1" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"
               onClick={(e) => handleToggleMute(e)}
@@ -1282,7 +1571,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   return (
     <div
       style={{ zIndex: 9990 }}
-      className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 select-none animate-fade-in"
+      className="fixed inset-0 h-[100dvh] bg-black/85 backdrop-blur-md flex items-center justify-center p-2.5 sm:p-4 safe-area-modal select-none animate-fade-in"
     >
       <audio ref={setRemoteAudio} autoPlay playsInline muted={!isSpeakerOn} />
 
@@ -1291,134 +1580,108 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         className={`w-full transition-all duration-300 relative flex flex-col items-center overflow-hidden border border-[#242f3d] shadow-2xl text-[#f5f5f5] ${
           isTheaterActive
             ? isFullscreen
-              ? 'fixed inset-0 z-50 rounded-none bg-black p-4'
-              : 'max-w-5xl h-[88vh] bg-[#17212b] rounded-3xl p-4 md:p-6'
-            : 'max-w-sm bg-[#17212b] rounded-3xl p-6 animate-pop-in'
+              ? 'fixed inset-0 z-50 rounded-none bg-black p-3 sm:p-4 safe-area-modal'
+              : 'max-w-5xl h-[90dvh] max-h-[92dvh] bg-[#17212b] rounded-3xl p-3 sm:p-5'
+            : 'max-w-md max-h-[92dvh] bg-[#17212b] rounded-3xl p-4 sm:p-6 animate-pop-in'
         }`}
       >
         {/* Top Header: Security, Status & Controls */}
-        <div className="w-full flex items-center justify-between pb-3 border-b border-[#242f3d]/70 mb-4 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-[#5288c1]">
-              <Shield size={14} className="text-[#5288c1]" />
-              <span className="font-medium text-[11px]">E2E MTProto WebRTC</span>
+        <div className="w-full flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#242f3d]/70 mb-3 flex-shrink-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div className="flex items-center gap-1 text-xs text-[#5288c1]">
+              <Shield size={14} className="text-[#5288c1] flex-shrink-0" />
+              <span className="font-medium text-[11px] truncate">E2E WebRTC</span>
             </div>
             {isTheaterActive && (
               <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold border border-emerald-500/30">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                HD 1080p
+                HD
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 ml-auto">
             <div
-              className="flex items-center gap-1.5 bg-[#0e1621] px-2.5 py-1 rounded-full border border-[#242f3d] cursor-pointer hover:border-[#5288c1] transition"
-              title="Ключ сквозного шифрования Telegram"
+              className="hidden xs:flex sm:flex items-center gap-1 bg-[#0e1621] px-2 py-1 rounded-full border border-[#242f3d]"
+              title="Ключ сквозного шифрования"
             >
               {encryptionEmojis.map((emoji, i) => (
-                <span key={i} className="text-xs select-none">
+                <span key={i} className="text-[11px] select-none">
                   {emoji}
                 </span>
               ))}
             </div>
 
-            <div className="flex items-center gap-1 ml-1.5">
-              {isTheaterActive && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isScreenSharing) {
-                      stopScreenSharing();
-                    } else if (isViewingRemoteScreen) {
-                      setIsViewingRemoteScreen(false);
-                    } else if (isVideoEnabled) {
-                      handleToggleCamera();
-                    }
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg bg-[#242f3d] hover:bg-[#2c394a] text-[#7f91a4] hover:text-white transition cursor-pointer flex items-center gap-1 text-xs"
-                  title="Выключить видео/трансляцию"
-                >
-                  <Minimize2 size={14} />
-                  <span className="hidden sm:inline">Выключить видео</span>
-                </button>
-              )}
-
-              {isTheaterActive && (
-                <button
-                  type="button"
-                  onClick={(e) => toggleFullscreen(e)}
-                  className="p-1.5 rounded-lg bg-[#242f3d] hover:bg-[#2c394a] text-white transition cursor-pointer"
-                  title={isFullscreen ? 'Свернуть полноэкранный режим' : 'Во весь экран'}
-                >
-                  {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                </button>
-              )}
-
+            {isTheaterActive && (
               <button
                 type="button"
-                onClick={() => setIsInviteModalOpen(true)}
-                className="px-2 py-1.5 rounded-lg bg-[#242f3d] hover:bg-[#2c394a] text-white transition cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
-                title="Пригласить участников в звонок"
+                onClick={(e) => toggleFullscreen(e)}
+                className="p-2 rounded-xl bg-[#242f3d] hover:bg-[#2c394a] text-white transition cursor-pointer"
+                title={isFullscreen ? 'Выйти из полноэкранного режима' : 'Во весь экран'}
               >
-                <UserPlus size={14} className="text-[#5288c1]" />
-                <span className="hidden sm:inline">Позвать</span>
+                {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
               </button>
+            )}
 
-              <button
-                type="button"
-                onClick={() => setIsMinimized(true)}
-                className="p-1.5 rounded-lg bg-[#242f3d] hover:bg-[#2c394a] text-[#7f91a4] hover:text-white transition cursor-pointer flex items-center gap-1 text-xs"
-                title="Свернуть звонок в плавающее окно"
-              >
-                <Minus size={15} />
-                <span className="hidden sm:inline">Свернуть</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setIsInviteModalOpen(true)}
+              className="px-2.5 py-1.5 rounded-xl bg-[#242f3d] hover:bg-[#2c394a] text-white transition cursor-pointer flex items-center gap-1 text-xs font-semibold"
+              title="Пригласить участников в звонок"
+            >
+              <UserPlus size={14} className="text-[#5288c1]" />
+              <span className="hidden sm:inline">Позвать</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsMinimized(true)}
+              className="p-2 rounded-xl bg-[#242f3d] hover:bg-[#2c394a] text-[#7f91a4] hover:text-white transition cursor-pointer flex items-center gap-1 text-xs"
+              title="Свернуть звонок в плавающее окно"
+            >
+              <Minus size={15} />
+              <span className="hidden sm:inline">Свернуть</span>
+            </button>
           </div>
         </div>
 
         {/* --- THEATER SCREEN / CAMERA VIEW --- */}
         {isTheaterActive ? (
-          <div className="flex-1 w-full min-h-0 flex flex-col relative my-1">
-            <div className="flex items-center justify-between px-3 py-1.5 mb-1.5 rounded-xl bg-black/40 border border-white/5 text-xs">
-              <div className="flex items-center gap-2 text-white">
+          <div className="flex-1 w-full min-h-0 flex flex-col relative my-0.5">
+            <div className="flex items-center justify-between px-3 py-1.5 mb-1.5 rounded-xl bg-black/40 border border-white/5 text-xs gap-2">
+              <div className="flex items-center gap-2 text-white min-w-0">
                 {isScreenSharingActive ? (
                   <>
-                    <Tv size={16} className="text-[#5288c1]" />
-                    <span className="font-semibold text-sm">
+                    <Tv size={15} className="text-[#5288c1] flex-shrink-0" />
+                    <span className="font-semibold text-xs sm:text-sm truncate">
                       {effectiveSelectedCallStream === 'local'
-                        ? 'Ваша демонстрация экрана'
-                        : `Демонстрация экрана: ${remoteScreenSenderName || targetName}`}
+                        ? 'Ваш экран'
+                        : `Экран: ${remoteScreenSenderName || targetName}`}
                     </span>
                   </>
                 ) : (
                   <>
-                    <Video size={16} className="text-emerald-400" />
-                    <span className="font-semibold text-sm">
+                    <Video size={15} className="text-emerald-400 flex-shrink-0" />
+                    <span className="font-semibold text-xs sm:text-sm truncate">
                       {isRemoteCameraActive
-                        ? `Видеозвонок: ${targetName}`
-                        : 'Видеозвонок (Ваша камера)'}
+                        ? `Видео: ${targetName}`
+                        : 'Ваша камера'}
                     </span>
                   </>
                 )}
-                <span className="text-[11px] text-emerald-400 font-mono tracking-wider ml-2">
+                <span className="text-[11px] text-emerald-400 font-mono tracking-wider flex-shrink-0">
                   {formatTime(seconds)}
                 </span>
               </div>
-              <div className="text-[11px] text-[#7f91a4] flex items-center gap-1.5">
+              <div className="text-[11px] text-[#7f91a4] flex items-center gap-1.5 flex-shrink-0">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                <span>Прямой эфир</span>
+                <span className="hidden sm:inline">Прямой эфир</span>
               </div>
             </div>
 
             {/* Multi-Stream Switcher Bar when both participants share screen */}
             {isScreenSharing && isRemoteScreenSharing && (
               <div className="flex items-center gap-1.5 px-3 py-1.5 mb-2 bg-[#0e1621]/95 rounded-2xl border border-white/10 overflow-x-auto no-scrollbar flex-shrink-0">
-                <div className="text-[11px] text-[#7f91a4] font-semibold flex items-center gap-1.5 mr-1 flex-shrink-0">
-                  <Tv size={13} className="text-[#5288c1]" />
-                  <span>Выбор демонстрации (2):</span>
-                </div>
                 <button
                   type="button"
                   onClick={() => setSelectedCallStream('remote')}
@@ -1429,12 +1692,12 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                   }`}
                 >
                   <img
-                    src={targetAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+                    src={getAvatarUrl(targetAvatar, targetName)}
+                    onError={(e) => handleAvatarError(e, targetName)}
                     alt={targetName}
                     className="w-4 h-4 rounded-full object-cover"
                   />
                   <span>Экран: {remoteScreenSenderName || targetName}</span>
-                  <span className={`w-2 h-2 rounded-full ${effectiveSelectedCallStream === 'remote' ? 'bg-emerald-300 animate-pulse' : 'bg-emerald-500'}`} />
                 </button>
                 <button
                   type="button"
@@ -1446,12 +1709,12 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                   }`}
                 >
                   <img
-                    src={currentUser?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+                    src={getAvatarUrl(currentUser?.avatar, currentUser?.name || 'Вы')}
+                    onError={(e) => handleAvatarError(e, currentUser?.name || 'Вы')}
                     alt={currentUser?.name || 'Вы'}
                     className="w-4 h-4 rounded-full object-cover"
                   />
-                  <span>Ваш экран (Вы)</span>
-                  <span className={`w-2 h-2 rounded-full ${effectiveSelectedCallStream === 'local' ? 'bg-emerald-300 animate-pulse' : 'bg-emerald-500'}`} />
+                  <span>Ваш экран</span>
                 </button>
               </div>
             )}
@@ -1460,7 +1723,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
               {isScreenSharingActive ? (
                 effectiveSelectedCallStream === 'local' ? (
                   <video
-                    ref={setLocalVideo}
+                    ref={setLocalScreenVideo}
                     autoPlay
                     playsInline
                     muted
@@ -1468,7 +1731,6 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                   />
                 ) : (
                   <div className="relative w-full h-full flex items-center justify-center bg-black">
-                    {/* WebRTC Video Stream */}
                     <video
                       ref={setRemoteVideo}
                       autoPlay
@@ -1477,7 +1739,6 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                       className={`w-full h-full object-contain ${isRemoteVideoPlaying ? 'block' : 'hidden'}`}
                     />
 
-                    {/* High-speed Real-time Frame Stream (Zero black screen guarantee) */}
                     {(!isRemoteVideoPlaying || !remoteVideoStreamRef.current) && remoteFrameDataUrl && (
                       <img
                         src={remoteFrameDataUrl}
@@ -1486,7 +1747,6 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                       />
                     )}
 
-                    {/* Animated Loader while connecting */}
                     {!isRemoteVideoPlaying && !remoteFrameDataUrl && (
                       <div className="flex flex-col items-center justify-center gap-3 text-[#7f91a4]">
                         <div className="w-9 h-9 border-3 border-[#5288c1] border-t-transparent rounded-full animate-spin" />
@@ -1496,92 +1756,113 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                   </div>
                 )
               ) : isRemoteCameraActive ? (
-                /* Remote Camera Active */
                 <div className="relative w-full h-full flex items-center justify-center bg-black">
                   <video
                     ref={setRemoteVideo}
                     autoPlay
                     playsInline
-                    className="w-full h-full object-contain"
+                    onPlaying={() => setIsRemoteCamWebRtcPlaying(true)}
+                    className={`w-full h-full object-contain ${isRemoteCamWebRtcPlaying ? 'block' : 'hidden'}`}
                   />
+                  {(!isRemoteCamWebRtcPlaying || !remoteVideoStreamRef.current) && remoteCameraFrameUrl && (
+                    <img
+                      src={remoteCameraFrameUrl}
+                      alt={targetName}
+                      className="w-full h-full object-contain select-none pointer-events-none"
+                    />
+                  )}
+                  {!isRemoteCamWebRtcPlaying && !remoteCameraFrameUrl && (
+                    <div className="flex flex-col items-center justify-center gap-2 text-[#7f91a4]">
+                      <div className="w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-xs">Загрузка видеокамеры...</span>
+                    </div>
+                  )}
                 </div>
               ) : (
-                /* Waiting for remote peer's camera */
-                <div className="relative w-full h-full flex flex-col items-center justify-center bg-[#0e1621]">
+                <div className="relative w-full h-full flex flex-col items-center justify-center bg-[#0e1621] p-4 text-center">
                   <img
-                    src={targetAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+                    src={getAvatarUrl(targetAvatar, targetName)}
+                    onError={(e) => handleAvatarError(e, targetName)}
                     alt={targetName}
-                    className="w-24 h-24 rounded-full object-cover border-4 border-[#242f3d] mb-3 shadow-xl"
+                    className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover border-4 border-[#242f3d] mb-3 shadow-xl"
                   />
                   <h3 className="font-bold text-base text-white mb-1">{targetName}</h3>
                   <span className="text-xs text-[#7f91a4] mb-3">Камера собеседника выключена</span>
                   <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-medium border border-emerald-500/30">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    Ваша камера включена и транслирует видео
+                    Ваша камера активна
                   </div>
                 </div>
               )}
 
               {/* Picture-in-Picture floating preview for local camera */}
               {isVideoEnabled && (
-                <div className="absolute bottom-4 right-4 w-28 h-40 sm:w-40 sm:h-56 rounded-2xl overflow-hidden border-2 border-[#5288c1] shadow-2xl bg-black z-30">
+                <div className="absolute bottom-3 right-3 w-24 h-36 sm:w-36 sm:h-52 rounded-2xl overflow-hidden border-2 border-[#5288c1] shadow-2xl bg-black z-30">
                   <video
-                    ref={setLocalVideo}
+                    ref={setLocalCameraVideo}
                     autoPlay
                     playsInline
                     muted
                     className={`w-full h-full object-cover transition-all ${
-                      isBackgroundBlur ? 'blur-[1.5px] scale-105 contrast-125' : ''
-                    }`}
+                      cameraFacingMode === 'user' ? 'scale-x-[-1]' : ''
+                    } ${isBackgroundBlur ? 'blur-[1.5px] scale-105 contrast-125' : ''}`}
                   />
-                  <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded-full text-[10px] text-white flex items-center gap-1">
+                  <div className="absolute top-1.5 left-1.5 bg-black/65 px-2 py-0.5 rounded-full text-[10px] text-white flex items-center gap-1">
                     <Video size={10} className="text-emerald-400" />
                     <span>Вы</span>
-                    {isBackgroundBlur && <span className="text-[9px] text-amber-300">✨ Blur</span>}
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleSwitchCamera}
+                    className="absolute bottom-1.5 right-1.5 p-1.5 rounded-full bg-black/70 hover:bg-black text-white border border-white/15 transition cursor-pointer active:scale-90"
+                    title="Переключить камеру (фронтальная / основная)"
+                  >
+                    <RefreshCw size={13} />
+                  </button>
                 </div>
               )}
 
-              <div className="absolute top-4 right-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-2 shadow-lg z-20">
+              <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 flex items-center gap-2 shadow-lg z-20">
                 <img
-                  src={targetAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+                  src={getAvatarUrl(targetAvatar, targetName)}
+                  onError={(e) => handleAvatarError(e, targetName)}
                   alt={targetName}
-                  className="w-6 h-6 rounded-full object-cover border border-white/20"
+                  className="w-5 h-5 rounded-full object-cover border border-white/20"
                 />
-                <span className="text-xs font-medium text-white max-w-[120px] truncate">{targetName}</span>
-                {isUserVerified(propTargetUser || chat?.targetUser) && <TelegramVerifiedBadge size={13} />}
+                <span className="text-xs font-medium text-white max-w-[110px] truncate">{targetName}</span>
+                {isUserVerified(propTargetUser || chat?.targetUser) && <TelegramVerifiedBadge size={12} />}
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
               </div>
             </div>
           </div>
         ) : (
           /* --- COMPACT CALL VIEW (Pure Audio) --- */
-          <div className="flex flex-col items-center w-full">
+          <div className="flex flex-col items-center w-full overflow-y-auto no-scrollbar py-1">
             {isRemoteScreenSharing && (
-              <div className="w-full mb-4 p-3 bg-gradient-to-r from-[#2481cc]/25 to-emerald-500/20 border border-[#5288c1]/40 rounded-2xl flex items-center justify-between animate-pulse">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-full bg-[#5288c1] flex items-center justify-center text-white shadow-md">
-                    <MonitorUp size={18} />
+              <div className="w-full mb-3 p-2.5 bg-gradient-to-r from-[#2481cc]/25 to-emerald-500/20 border border-[#5288c1]/40 rounded-2xl flex items-center justify-between gap-2 animate-pulse">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-[#5288c1] flex items-center justify-center text-white shadow-md flex-shrink-0">
+                    <MonitorUp size={16} />
                   </div>
-                  <div className="text-left">
-                    <p className="text-xs font-semibold text-white leading-tight">
-                      {remoteScreenSenderName || 'Собеседник'} включил(а) экран
+                  <div className="text-left min-w-0">
+                    <p className="text-xs font-semibold text-white truncate">
+                      {remoteScreenSenderName || 'Собеседник'} делится экраном
                     </p>
-                    <p className="text-[10px] text-emerald-400 font-medium">Трансляция активна</p>
+                    <p className="text-[10px] text-emerald-400 font-medium">Нажмите, чтобы смотреть</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsViewingRemoteScreen(true)}
-                  className="px-3.5 py-1.5 bg-[#2481cc] hover:bg-[#1e70b3] text-white text-xs font-semibold rounded-xl transition shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95"
+                  className="px-3 py-1.5 bg-[#2481cc] hover:bg-[#1e70b3] text-white text-xs font-semibold rounded-xl transition shadow-md flex items-center gap-1 cursor-pointer active:scale-95 flex-shrink-0"
                 >
                   <span>Смотреть</span>
-                  <Maximize2 size={13} />
+                  <Maximize2 size={12} />
                 </button>
               </div>
             )}
 
-            <div className="relative mb-5">
+            <div className="relative mb-4 mt-1">
               <div
                 className={`absolute -inset-2 rounded-full bg-[#5288c1]/20 transition-all ${
                   status === 'calling'
@@ -1592,26 +1873,24 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                 }`}
               />
               <img
-                src={
-                  targetAvatar ||
-                  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'
-                }
+                src={getAvatarUrl(targetAvatar, targetName)}
+                onError={(e) => handleAvatarError(e, targetName)}
                 alt={targetName}
-                className="w-28 h-28 rounded-full object-cover border-4 border-[#242f3d] relative z-10 shadow-xl"
+                className="w-24 h-24 sm:w-28 sm:h-28 rounded-full object-cover border-4 border-[#242f3d] relative z-10 shadow-xl"
               />
             </div>
 
-            <h3 className="font-bold text-lg text-center flex items-center justify-center gap-1.5 mb-1">
+            <h3 className="font-bold text-lg text-center flex items-center justify-center gap-1.5 mb-1 max-w-full px-2">
               <span className="truncate">{targetName}</span>
               {isUserVerified(propTargetUser || chat?.targetUser) && (
                 <TelegramVerifiedBadge size={17} />
               )}
             </h3>
 
-            <div className="text-xs mb-4 text-center">
+            <div className="text-xs mb-3 text-center">
               {status === 'calling' && (
                 <span className="text-[#7f91a4] font-medium flex items-center gap-1.5 justify-center animate-pulse">
-                  <span>Звонок...</span>
+                  <span>Вызов...</span>
                 </span>
               )}
               {status === 'connecting' && (
@@ -1635,19 +1914,23 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                     {formatTime(seconds)}
                   </span>
                   <span className="text-[10px] text-[#7f91a4] flex items-center gap-1 mt-0.5">
-                    {isSoloEchoMode ? (
+                    {selectedVoiceEffect !== 'normal' ? (
+                      <span className="text-purple-300 font-semibold">
+                        Голос: {AVAILABLE_VOICE_EFFECTS.find((e) => e.id === selectedVoiceEffect)?.name}
+                      </span>
+                    ) : isSoloEchoMode ? (
                       <span className="text-[#5288c1] flex items-center gap-1">
-                        <Sparkles size={11} /> Эхо-тест микрофона (звук активен)
+                        <Sparkles size={11} /> Эхо-тест микрофона
                       </span>
                     ) : (
-                      'отличное соединение MTProto'
+                      'защищённое соединение'
                     )}
                   </span>
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-1 h-7 mb-5">
+            <div className="flex items-center gap-1 h-6 mb-3">
               {visualizerHeights.map((h, i) => (
                 <div
                   key={i}
@@ -1667,151 +1950,125 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
           </div>
         )}
 
-        {/* Action Controls Row */}
-        <div className={`flex items-center justify-center gap-3 w-full flex-shrink-0 ${isTheaterActive ? 'pt-3' : 'pt-1'}`}>
+        {/* Responsive Wrapping Action Controls Grid/Row — ALL buttons always visible on phones & PC */}
+        <div
+          className={`flex flex-wrap items-center justify-center gap-2.5 sm:gap-3 w-full flex-shrink-0 ${
+            isTheaterActive ? 'pt-2.5' : 'pt-1'
+          }`}
+        >
           <button
             type="button"
             onClick={(e) => handleToggleMute(e)}
-            className={`p-3 rounded-full transition shadow-md cursor-pointer ${
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
               isMuted
-                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
+                ? 'bg-rose-500/25 text-rose-400 border border-rose-500/40'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
             }`}
             title={isMuted ? 'Включить микрофон' : 'Отключить микрофон'}
           >
-            {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+            {isMuted ? <MicOff size={19} /> : <Mic size={19} />}
           </button>
 
           <button
             type="button"
             onClick={(e) => handleToggleCamera(e)}
-            className={`p-3 rounded-full transition shadow-md cursor-pointer ${
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
               isVideoEnabled
-                ? 'bg-[#5288c1] text-white'
-                : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
+                ? 'bg-[#5288c1] text-white ring-2 ring-[#5288c1]/40'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
             }`}
             title={isVideoEnabled ? 'Выключить камеру' : 'Включить видеокамеру'}
           >
-            {isVideoEnabled ? <Video size={20} /> : <VideoOff size={20} />}
+            {isVideoEnabled ? <Video size={19} /> : <VideoOff size={19} />}
           </button>
 
-          <button
-            type="button"
-            onClick={(e) => handleEndCall(e)}
-            className="p-4 rounded-full bg-rose-600 hover:bg-rose-700 text-white shadow-xl shadow-rose-600/40 transition hover:scale-105 active:scale-95 cursor-pointer"
-            title="Завершить звонок"
-          >
-            <PhoneOff size={24} />
-          </button>
+          {isVideoEnabled && (
+            <button
+              type="button"
+              onClick={(e) => handleSwitchCamera(e)}
+              className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full bg-[#242f3d] hover:bg-[#2b394a] text-white transition shadow-md cursor-pointer active:scale-95"
+              title="Переключить фронтальную / основную камеру"
+            >
+              <RefreshCw size={18} />
+            </button>
+          )}
 
           <button
             type="button"
             onClick={(e) => handleToggleSpeaker(e)}
-            className={`p-3 rounded-full transition shadow-md cursor-pointer ${
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
               !isSpeakerOn
-                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
+                ? 'bg-rose-500/25 text-rose-400 border border-rose-500/40'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
             }`}
             title={isSpeakerOn ? 'Отключить динамик' : 'Включить динамик'}
           >
-            {isSpeakerOn ? <Volume2 size={20} /> : <VolumeX size={20} />}
+            {isSpeakerOn ? <Volume2 size={19} /> : <VolumeX size={19} />}
           </button>
 
           <button
             type="button"
             onClick={(e) => handleToggleScreenShare(e)}
-            className={`p-3 rounded-full transition shadow-md cursor-pointer ${
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
               isScreenSharing
-                ? 'bg-emerald-600 text-white shadow-emerald-600/40'
-                : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
+                ? 'bg-emerald-600 text-white shadow-emerald-600/40 ring-2 ring-emerald-400/50'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
             }`}
-            title={isScreenSharing ? 'Остановить трансляцию экрана' : 'Включить демонстрацию экрана'}
+            title={isScreenSharing ? 'Остановить трансляцию экрана' : 'Демонстрация экрана'}
           >
-            <MonitorUp size={20} />
+            <MonitorUp size={19} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsVoiceEffectsOpen(true)}
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer relative active:scale-95 ${
+              selectedVoiceEffect !== 'normal' || isVoiceMonitorOn
+                ? 'bg-purple-600 text-white shadow-purple-600/40 ring-2 ring-purple-400'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
+            }`}
+            title="Модуляция голоса (Voice Changer)"
+          >
+            <Wand2 size={19} />
+            {selectedVoiceEffect !== 'normal' && (
+              <span className="absolute -top-1 -right-1 text-xs">✨</span>
+            )}
           </button>
 
           <button
             type="button"
             onClick={() => setIsInviteModalOpen(true)}
-            className="p-3 rounded-full bg-[#242f3d] hover:bg-[#202b36] text-white transition shadow-md cursor-pointer"
+            className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full bg-[#242f3d] hover:bg-[#2b394a] text-white transition shadow-md cursor-pointer active:scale-95"
             title="Пригласить участников в звонок"
           >
-            <UserPlus size={20} />
+            <UserPlus size={19} />
           </button>
 
-          {/* Call Recording button */}
           <button
             type="button"
             onClick={toggleCallRecording}
-            className={`p-3 rounded-full transition shadow-md cursor-pointer ${
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
               isRecordingCall
                 ? 'bg-rose-500 text-white animate-pulse shadow-rose-500/40'
-                : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
             }`}
-            title={isRecordingCall ? 'Остановить запись звонка' : 'Записать разговор (диктофон)'}
+            title={isRecordingCall ? 'Остановить запись звонка' : 'Записать звонок'}
           >
-            <Radio size={20} className={isRecordingCall ? 'animate-spin' : ''} />
+            <Radio size={19} className={isRecordingCall ? 'animate-spin' : ''} />
           </button>
 
-          {/* Voice Effects Menu Toggle */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setIsVoiceEffectsOpen(!isVoiceEffectsOpen)}
-              className={`p-3 rounded-full transition shadow-md cursor-pointer relative ${
-                selectedVoiceEffect !== 'normal'
-                  ? 'bg-purple-600 text-white shadow-purple-600/40 ring-2 ring-purple-400'
-                  : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
-              }`}
-              title="Эффекты изменения голоса (Voice Changer)"
-            >
-              <Wand2 size={20} />
-              {selectedVoiceEffect !== 'normal' && (
-                <span className="absolute -top-1 -right-1 text-xs">✨</span>
-              )}
-            </button>
-
-            {/* Voice Effects Popup Dropdown */}
-            {isVoiceEffectsOpen && (
-              <div className="absolute bottom-14 left-1/2 -translate-x-1/2 w-52 bg-[#17212b]/95 backdrop-blur-md border border-white/10 rounded-2xl p-2 shadow-2xl flex flex-col gap-1 z-50 animate-pop-in text-white text-xs">
-                <div className="px-2 py-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-                  Изменение голоса
-                </div>
-                {AVAILABLE_VOICE_EFFECTS.map((eff) => (
-                  <button
-                    key={eff.id}
-                    type="button"
-                    onClick={() => handleSelectVoiceEffect(eff.id)}
-                    className={`flex items-center justify-between p-2 rounded-xl transition cursor-pointer ${
-                      selectedVoiceEffect === eff.id
-                        ? 'bg-purple-600/40 border border-purple-400/60 text-white font-semibold'
-                        : 'hover:bg-white/10 text-zinc-200'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">{eff.icon}</span>
-                      <span>{eff.name}</span>
-                    </div>
-                    {selectedVoiceEffect === eff.id && <Check size={14} className="text-purple-400" />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Background Blur Toggle (when camera is on) */}
           {isVideoEnabled && (
             <button
               type="button"
               onClick={() => setIsBackgroundBlur(!isBackgroundBlur)}
-              className={`p-3 rounded-full transition shadow-md cursor-pointer ${
+              className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
                 isBackgroundBlur
                   ? 'bg-amber-500 text-white shadow-amber-500/40 ring-2 ring-amber-300'
-                  : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
+                  : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
               }`}
-              title={isBackgroundBlur ? 'Отключить размытие фона' : 'Размыть фон (Background Blur)'}
+              title={isBackgroundBlur ? 'Отключить размытие фона' : 'Размытие фона'}
             >
-              <Sparkles size={20} />
+              <Sparkles size={19} />
             </button>
           )}
 
@@ -1819,13 +2076,80 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             <button
               type="button"
               onClick={() => setIsViewingRemoteScreen(true)}
-              className="p-3 rounded-full bg-[#2481cc] hover:bg-[#1e70b3] text-white transition shadow-md animate-pulse cursor-pointer"
+              className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full bg-[#2481cc] hover:bg-[#1e70b3] text-white transition shadow-md animate-pulse cursor-pointer active:scale-95"
               title="Смотреть демонстрацию экрана собеседника"
             >
-              <Tv size={20} />
+              <Tv size={19} />
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={(e) => handleEndCall(e)}
+            className="w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center rounded-full bg-rose-600 hover:bg-rose-700 text-white shadow-xl shadow-rose-600/40 transition hover:scale-105 active:scale-95 cursor-pointer"
+            title="Завершить звонок"
+          >
+            <PhoneOff size={22} />
+          </button>
         </div>
+
+        {/* Voice Changer Full Unclipped Overlay Sheet */}
+        {isVoiceEffectsOpen && (
+          <div className="absolute inset-0 z-50 bg-[#17212b]/95 backdrop-blur-md rounded-3xl p-4 sm:p-5 flex flex-col animate-fade-in text-[#f5f5f5]">
+            <div className="flex items-center justify-between pb-3 border-b border-[#242f3d]">
+              <div className="flex items-center gap-2">
+                <Wand2 size={18} className="text-purple-400" />
+                <h3 className="font-semibold text-sm">Модуляция голоса в реальном времени</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsVoiceEffectsOpen(false)}
+                className="p-1.5 rounded-lg text-[#7f91a4] hover:text-white hover:bg-[#242f3d] transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="my-3">
+              <button
+                type="button"
+                onClick={handleToggleVoiceMonitor}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+                  isVoiceMonitorOn
+                    ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                    : 'bg-[#0e1621] border-[#242f3d] text-[#7f91a4] hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Headphones size={16} className={isVoiceMonitorOn ? 'text-emerald-400' : 'text-[#5288c1]'} />
+                  <span>Прослушать свой голос (самопроверка)</span>
+                </div>
+                <span>{isVoiceMonitorOn ? 'ВКЛ' : 'ВЫКЛ'}</span>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-2 pr-1 no-scrollbar min-h-0">
+              {AVAILABLE_VOICE_EFFECTS.map((eff) => (
+                <button
+                  key={eff.id}
+                  type="button"
+                  onClick={() => handleSelectVoiceEffect(eff.id)}
+                  className={`flex items-center justify-between p-3 rounded-2xl transition cursor-pointer border ${
+                    selectedVoiceEffect === eff.id
+                      ? 'bg-purple-600/35 border-purple-400 text-white font-semibold shadow-lg'
+                      : 'bg-[#0e1621]/80 hover:bg-[#0e1621] border-white/5 text-zinc-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xl">{eff.icon}</span>
+                    <span className="text-xs sm:text-sm">{eff.name}</span>
+                  </div>
+                  {selectedVoiceEffect === eff.id && <Check size={16} className="text-purple-300" />}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Toast notification */}
         {inviteToast && (
@@ -1837,7 +2161,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
         {/* In-call Invite Modal */}
         {isInviteModalOpen && (
-          <div className="absolute inset-0 z-50 bg-[#17212b]/95 backdrop-blur-md rounded-3xl p-5 flex flex-col animate-fade-in text-[#f5f5f5]">
+          <div className="absolute inset-0 z-50 bg-[#17212b]/95 backdrop-blur-md rounded-3xl p-4 sm:p-5 flex flex-col animate-fade-in text-[#f5f5f5]">
             <div className="flex items-center justify-between pb-3 border-b border-[#242f3d]">
               <div className="flex items-center gap-2">
                 <UserPlus size={18} className="text-[#5288c1]" />
@@ -1846,7 +2170,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
               <button
                 type="button"
                 onClick={() => setIsInviteModalOpen(false)}
-                className="p-1 rounded-lg text-[#7f91a4] hover:text-white hover:bg-[#242f3d] transition cursor-pointer"
+                className="p-1.5 rounded-lg text-[#7f91a4] hover:text-white hover:bg-[#242f3d] transition cursor-pointer"
               >
                 <X size={18} />
               </button>
@@ -1877,7 +2201,8 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
                         <img
-                          src={u.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+                          src={getAvatarUrl(u.avatar, u.name)}
+                          onError={(e) => handleAvatarError(e, u.name)}
                           alt={u.name}
                           className="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-white/10"
                         />
@@ -1903,7 +2228,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                         {isInvited ? (
                           <>
                             <Check size={12} />
-                            <span>Вызов отправлен</span>
+                            <span>Отправлено</span>
                           </>
                         ) : (
                           <>

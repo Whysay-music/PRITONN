@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
-import { X, Download, Play, Pause, Volume2, VolumeX, Maximize2 } from 'lucide-react';
+import { X, Download } from 'lucide-react';
+import { resolveMediaUrl } from '../utils/avatar';
 
 interface VideoPlayerModalProps {
   isOpen: boolean;
@@ -38,10 +39,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
   if (!isOpen || !videoUrl) return null;
 
+  const resolvedUrl = resolveMediaUrl(videoUrl);
+
   const handleDownload = () => {
     const a = document.createElement('a');
-    a.href = videoUrl;
-    a.download = title || `telegram_video_${Date.now()}.mp4`;
+    a.href = resolvedUrl;
+    a.target = '_blank';
+    a.download = title || `pritonn_video_${Date.now()}.mp4`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -57,9 +61,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     : '';
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md select-none animate-fade-in">
+    <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur-md select-none animate-fade-in safe-area-modal">
       {/* Top Header */}
-      <div className="h-14 px-5 flex items-center justify-between text-white bg-gradient-to-b from-black/80 to-transparent z-10">
+      <div className="min-h-[56px] px-4 py-2 flex items-center justify-between text-white bg-gradient-to-b from-black/80 to-transparent z-10">
         <div>
           <div className="font-medium text-sm truncate max-w-md">
             {title || 'Видеозапись'}
@@ -103,7 +107,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         <div className="relative max-w-4xl max-h-[80vh] w-full flex items-center justify-center bg-black/40 rounded-xl overflow-hidden shadow-2xl border border-white/10">
           <video
             ref={videoRef}
-            src={videoUrl}
+            src={resolvedUrl}
             controls
             autoPlay
             playsInline

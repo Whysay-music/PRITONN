@@ -148,7 +148,10 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 select-none animate-fade-in relative overflow-hidden">
+    <div
+      style={{ zIndex: 9995 }}
+      className="fixed inset-0 h-[100dvh] bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 safe-area-modal select-none animate-fade-in relative overflow-hidden"
+    >
       {/* Ambient background avatar glow */}
       <div
         className="absolute inset-0 bg-cover bg-center blur-3xl opacity-20 scale-125"

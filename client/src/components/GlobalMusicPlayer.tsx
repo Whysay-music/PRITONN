@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, X, Volume2, VolumeX, SkipBack, SkipForward, Music } from 'lucide-react';
+import { resolveMediaUrl } from '../utils/avatar';
 
 export interface AudioTrack {
   id: string;
@@ -33,7 +34,7 @@ export const GlobalMusicPlayer: React.FC<GlobalMusicPlayerProps> = ({
   useEffect(() => {
     if (!currentTrack) return;
     if (audioRef.current) {
-      audioRef.current.src = currentTrack.url;
+      audioRef.current.src = resolveMediaUrl(currentTrack.url);
       audioRef.current.playbackRate = playbackRate;
       audioRef.current
         .play()

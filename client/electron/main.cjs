@@ -69,6 +69,8 @@ function createWindow() {
     },
   });
 
+  session.defaultSession.setPermissionCheckHandler(() => true);
+
   // Grant camera, microphone, and screen-sharing permissions automatically for WebRTC calls
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedPermissions = [

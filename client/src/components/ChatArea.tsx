@@ -48,6 +48,7 @@ import {
   Gamepad2,
   Languages,
   Wand2,
+  Loader2,
 } from 'lucide-react';
 import { Chat, Message, User, ReplyInfo, InlineKeyboardButton } from '../types';
 import { VoiceMessagePlayer } from './VoiceMessagePlayer';
@@ -61,7 +62,7 @@ import { TelegramSpoilerText } from './TelegramSpoilerText';
 import { TelegramBurnTimer } from './TelegramBurnTimer';
 import { PhotoViewerModal } from './PhotoViewerModal';
 import { VideoPlayerModal } from './VideoPlayerModal';
-import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import { getAvatarUrl, handleAvatarError, resolveMediaUrl } from '../utils/avatar';
 import { TelegramAudioPlayer } from './TelegramAudioPlayer';
 import { VideoNoteRecorder } from './VideoNoteRecorder';
 import { TelegramRoundVideoPlayer } from './TelegramRoundVideoPlayer';
@@ -309,13 +310,29 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isStickerGifOpen, setIsStickerGifOpen] = useState(false);
   const [isWallpaperModalOpen, setIsWallpaperModalOpen] = useState(false);
   const [isScheduledModalOpen, setIsScheduledModalOpen] = useState(false);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [chatWallpaper, setChatWallpaper] = useState<string>(() => {
-    return localStorage.getItem(`pritonn_chat_wallpaper_${chat?.id}`) || chat?.wallpaper || '';
+    try {
+      const perChat = chat?.id ? localStorage.getItem(`pritonn_chat_wallpaper_${chat.id}`) : null;
+      if (perChat !== null) return perChat;
+      return chat?.wallpaper || localStorage.getItem('pritonn_global_wallpaper') || '';
+    } catch {
+      return chat?.wallpaper || '';
+    }
   });
 
   useEffect(() => {
     if (chat?.id) {
-      setChatWallpaper(localStorage.getItem(`pritonn_chat_wallpaper_${chat.id}`) || chat.wallpaper || '');
+      try {
+        const perChat = localStorage.getItem(`pritonn_chat_wallpaper_${chat.id}`);
+        if (perChat !== null) {
+          setChatWallpaper(perChat);
+        } else {
+          setChatWallpaper(chat.wallpaper || localStorage.getItem('pritonn_global_wallpaper') || '');
+        }
+      } catch {
+        setChatWallpaper(chat.wallpaper || '');
+      }
     }
   }, [chat?.id, chat?.wallpaper]);
 
@@ -459,10 +476,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   };
 
   // Telegram Video Note (Кружочек) sending
-  const handleSendVideoNote = async (blob: Blob, duration: number) => {
+  const handleSendVideoNote = async (blob: Blob, duration: number, mimeType?: string) => {
+    setIsUploadingMedia(true);
     try {
+      const ext = mimeType && mimeType.includes('mp4') ? 'mp4' : 'webm';
       const formData = new FormData();
-      formData.append('file', blob, `video_note_${Date.now()}.webm`);
+      formData.append('file', blob, `video_note_${Date.now()}.${ext}`);
       const res = await fetch(`${API_BASE_URL}/api/upload`, {
         method: 'POST',
         body: formData,
@@ -476,9 +495,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           videoDuration: duration,
           replyToId: replyingTo?.id,
         });
+        setReplyingTo(null);
+        setIsUploadingMedia(false);
         return;
       }
-    } catch {}
+    } catch (err) {
+      console.warn('Video note upload error, falling back to DataURL:', err);
+    }
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -489,7 +512,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         videoDuration: duration,
         replyToId: replyingTo?.id,
       });
+      setReplyingTo(null);
+      setIsUploadingMedia(false);
     };
+    reader.onerror = () => setIsUploadingMedia(false);
     reader.readAsDataURL(blob);
   };
 
@@ -530,18 +556,36 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const lowerName = (file.name || '').toLowerCase();
     let mediaType: 'image' | 'video' | 'audio' | 'file' = 'file';
-    if (typeHint) {
+    if (typeHint && typeHint !== 'file') {
       mediaType = typeHint;
-    } else if (file.type.startsWith('image/')) {
+    } else if (
+      file.type.startsWith('image/') ||
+      /\.(jpg|jpeg|png|gif|webp|bmp|heic|svg)$/.test(lowerName)
+    ) {
       mediaType = 'image';
-    } else if (file.type.startsWith('video/')) {
+    } else if (
+      file.type.startsWith('video/') ||
+      /\.(mp4|webm|mov|mkv|avi|m4v)$/.test(lowerName)
+    ) {
       mediaType = 'video';
-    } else if (file.type.startsWith('audio/')) {
+    } else if (
+      file.type.startsWith('audio/') ||
+      /\.(mp3|wav|ogg|m4a|aac|flac|opus|wma)$/.test(lowerName)
+    ) {
       mediaType = 'audio';
+    } else if (typeHint === 'file') {
+      mediaType = 'file';
     }
 
     const sizeStr = formatFileSize(file.size);
+    const captionToSend = inputText;
+    const replyIdToSend = replyingTo?.id;
+    const spoilerToSend = isSpoilerSend;
+    const burnToSend = selectedBurnTimer;
+
+    setIsUploadingMedia(true);
 
     // Try server upload first
     try {
@@ -555,14 +599,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       if (res.ok) {
         const data = await res.json();
         onSendMessage({
-          text: inputText,
+          text: captionToSend,
           mediaUrl: data.url,
           mediaType,
-          fileName: file.name,
+          fileName: data.filename || file.name,
           fileSize: sizeStr,
-          replyToId: replyingTo?.id,
-          isSpoiler: isSpoilerSend,
-          burnTimer: selectedBurnTimer,
+          replyToId: replyIdToSend,
+          isSpoiler: spoilerToSend,
+          burnTimer: burnToSend,
         });
         setInputText('');
         if (chat && onSaveDraft) {
@@ -571,6 +615,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         setIsSpoilerSend(false);
         setSelectedBurnTimer(undefined);
         setReplyingTo(null);
+        setIsUploadingMedia(false);
         e.target.value = '';
         return;
       }
@@ -578,18 +623,25 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       console.warn('Server upload failed, falling back to local FileReader:', err);
     }
 
-    // Fallback DataURL
+    if (file.size > 25 * 1024 * 1024) {
+      setIsUploadingMedia(false);
+      e.target.value = '';
+      alert('Не удалось загрузить большой файл на сервер. Проверьте подключение к интернету.');
+      return;
+    }
+
+    // Fallback DataURL for smaller files when offline
     const reader = new FileReader();
     reader.onload = () => {
       onSendMessage({
-        text: inputText,
+        text: captionToSend,
         mediaUrl: reader.result as string,
         mediaType,
         fileName: file.name,
         fileSize: sizeStr,
-        replyToId: replyingTo?.id,
-        isSpoiler: isSpoilerSend,
-        burnTimer: selectedBurnTimer,
+        replyToId: replyIdToSend,
+        isSpoiler: spoilerToSend,
+        burnTimer: burnToSend,
       });
       setInputText('');
       if (chat && onSaveDraft) {
@@ -598,7 +650,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       setIsSpoilerSend(false);
       setSelectedBurnTimer(undefined);
       setReplyingTo(null);
+      setIsUploadingMedia(false);
     };
+    reader.onerror = () => setIsUploadingMedia(false);
     reader.readAsDataURL(file);
     e.target.value = '';
   };
@@ -898,12 +952,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
 
       {/* Messages Scroll Area */}
       <div
-        className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2 relative transition-all"
-        style={{
-          background: chatWallpaper
-            ? `url(${chatWallpaper}) center/cover no-repeat fixed`
-            : undefined,
-        }}
+        className="flex-1 overflow-y-auto px-3 sm:px-4 py-3 flex flex-col gap-2 relative"
+        style={
+          chatWallpaper
+            ? {
+                backgroundImage: `url("${resolveMediaUrl(chatWallpaper)}")`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundRepeat: 'no-repeat',
+              }
+            : undefined
+        }
       >
         {/* Date pill */}
         <div className="flex justify-center my-1 select-none">
@@ -965,6 +1024,36 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               );
             }
 
+            {/* Special Group Voice Chat Ended Message */}
+            if (msg.type === 'voice_chat_end') {
+              const endDur = msg.callData?.duration || 0;
+              return (
+                <div key={msg.id} className="flex justify-center my-3 select-none animate-pop-in">
+                  <div className="bg-[#17212b]/95 border border-rose-500/35 backdrop-blur-md rounded-2xl p-3 px-4 shadow-xl flex items-center gap-3.5 max-w-sm">
+                    <div className="w-10 h-10 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center flex-shrink-0">
+                      <PhoneOff size={18} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white leading-tight">
+                        📞 Голосовой звонок завершён
+                      </p>
+                      <p className="text-[11px] text-[#7f91a4] font-medium">
+                        {endDur > 0 ? `Длительность: ${formatCallDuration(endDur)}` : 'Звонок окончен'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsGroupVoiceChatOpen(true)}
+                      className="px-3 py-1.5 rounded-xl bg-[#242f3d] hover:bg-[#2c394a] text-[#5288c1] text-xs font-semibold transition active:scale-95 cursor-pointer flex items-center gap-1 flex-shrink-0"
+                    >
+                      <PhoneCall size={12} />
+                      <span>Начать</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
             {/* Special Call History Message in Chat */}
             if (msg.type === 'call') {
               const isCaller = msg.senderId === currentUser.id || msg.callData?.callerId === currentUser.id;
@@ -978,18 +1067,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               let iconBg = '';
 
               if (isSuccess) {
-                if (isCaller) {
-                  title = isVideo ? 'Исходящий видеозвонок' : 'Исходящий звонок';
-                  icon = <PhoneOutgoing size={17} />;
-                  iconBg = 'bg-emerald-500/15 text-emerald-500 dark:bg-emerald-500/25 dark:text-emerald-400';
-                } else {
-                  title = isVideo ? 'Входящий видеозвонок' : 'Входящий звонок';
-                  icon = <PhoneIncoming size={17} />;
-                  iconBg = 'bg-emerald-500/15 text-emerald-500 dark:bg-emerald-500/25 dark:text-emerald-400';
-                }
+                title = isVideo ? 'Видеозвонок завершён' : 'Звонок завершён';
+                icon = isCaller ? <PhoneOutgoing size={17} /> : <PhoneIncoming size={17} />;
+                iconBg = 'bg-emerald-500/15 text-emerald-500 dark:bg-emerald-500/25 dark:text-emerald-400';
               } else {
                 if (isCaller) {
-                  title = status === 'rejected' ? 'Звонок отклонён' : 'Отменённый звонок';
+                  title = status === 'rejected' ? 'Звонок отклонён' : 'Звонок завершён (без ответа)';
                   icon = <PhoneOff size={17} />;
                   iconBg = 'bg-rose-500/15 text-rose-500 dark:bg-rose-500/25 dark:text-rose-400';
                 } else {
@@ -1155,7 +1238,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 {msg.isRoundVideo && msg.mediaUrl && (
                   <div className="mb-1.5 flex justify-center">
                     <TelegramRoundVideoPlayer
-                      src={msg.mediaUrl}
+                      src={resolveMediaUrl(msg.mediaUrl)}
                       duration={msg.videoDuration}
                       isOutgoing={isOutgoing}
                     />
@@ -1175,7 +1258,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 )}
 
                 {/* Image Media */}
-                {msg.mediaUrl && (msg.mediaType === 'image' || (!msg.mediaType && !msg.isVoice)) && (
+                {msg.mediaUrl && !msg.isRoundVideo && !msg.isSticker && !msg.isGif && (msg.mediaType === 'image' || (!msg.mediaType && !msg.isVoice)) && (
                   <div
                     onClick={() => {
                       if (msg.isSpoiler && !revealedSpoilers[msg.id]) {
@@ -1183,7 +1266,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         return;
                       }
                       setSelectedPhoto({
-                        url: msg.mediaUrl!,
+                        url: resolveMediaUrl(msg.mediaUrl!),
                         title: msg.fileName || 'Фотография',
                         timestamp: msg.timestamp,
                       });
@@ -1192,7 +1275,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     title={msg.isSpoiler && !revealedSpoilers[msg.id] ? 'Нажмите, чтобы открыть спойлер' : 'Нажмите, чтобы открыть фото'}
                   >
                     <img
-                      src={msg.mediaUrl}
+                      src={resolveMediaUrl(msg.mediaUrl)}
                       alt="attachment"
                       className={`w-full h-full object-cover group-hover:opacity-90 transition ${
                         msg.isSpoiler && !revealedSpoilers[msg.id] ? 'blur-xl scale-105' : ''
@@ -1216,7 +1299,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 )}
 
                 {/* Video Media */}
-                {msg.mediaUrl && msg.mediaType === 'video' && (
+                {msg.mediaUrl && !msg.isRoundVideo && msg.mediaType === 'video' && (
                   <div
                     onClick={() => {
                       if (msg.isSpoiler && !revealedSpoilers[msg.id]) {
@@ -1224,7 +1307,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         return;
                       }
                       setSelectedVideo({
-                        url: msg.mediaUrl!,
+                        url: resolveMediaUrl(msg.mediaUrl!),
                         title: msg.fileName || 'Видеозапись',
                         timestamp: msg.timestamp,
                       });
@@ -1233,7 +1316,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     title={msg.isSpoiler && !revealedSpoilers[msg.id] ? 'Нажмите, чтобы открыть спойлер' : 'Нажмите, чтобы воспроизвести видео'}
                   >
                     <video
-                      src={msg.mediaUrl}
+                      src={resolveMediaUrl(msg.mediaUrl)}
+                      playsInline
                       className={`w-full max-h-80 object-cover ${
                         msg.isSpoiler && !revealedSpoilers[msg.id] ? 'blur-xl scale-105' : ''
                       }`}
@@ -1265,7 +1349,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 {msg.mediaUrl && msg.mediaType === 'audio' && (
                   <div className="mb-1.5">
                     <TelegramAudioPlayer
-                      src={msg.mediaUrl}
+                      src={resolveMediaUrl(msg.mediaUrl)}
                       title={msg.fileName}
                       fileSize={msg.fileSize}
                       duration={msg.audioDuration}
@@ -1280,8 +1364,10 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 {msg.mediaUrl && msg.mediaType === 'file' && (
                   <div
                     onClick={() => {
+                      const fileHref = resolveMediaUrl(msg.mediaUrl!);
                       const a = document.createElement('a');
-                      a.href = msg.mediaUrl!;
+                      a.href = fileHref;
+                      a.target = '_blank';
                       a.download = msg.fileName || 'file';
                       document.body.appendChild(a);
                       a.click();
@@ -1316,7 +1402,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 {msg.isSticker && (msg.stickerUrl || msg.mediaUrl) && (
                   <div className="my-1 flex justify-center">
                     <img
-                      src={msg.stickerUrl || msg.mediaUrl || ''}
+                      src={resolveMediaUrl(msg.stickerUrl || msg.mediaUrl || '')}
                       alt="Sticker"
                       className="w-36 h-36 object-contain rounded-xl hover:scale-105 transition drop-shadow-md"
                     />
@@ -1327,7 +1413,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 {msg.isGif && (msg.gifUrl || msg.mediaUrl) && (
                   <div className="my-1 rounded-xl overflow-hidden max-w-xs shadow-md">
                     <img
-                      src={msg.gifUrl || msg.mediaUrl || ''}
+                      src={resolveMediaUrl(msg.gifUrl || msg.mediaUrl || '')}
                       alt="GIF"
                       className="w-full h-auto object-cover rounded-xl"
                     />
@@ -1406,7 +1492,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                         type="button"
                         onClick={() => onPlayGlobalAudio({
                           id: msg.id,
-                          url: msg.mediaUrl!,
+                          url: resolveMediaUrl(msg.mediaUrl!),
                           title: msg.fileName || 'Музыкальный трек',
                           artist: isOutgoing ? currentUser.name : (allUsers.find(u => u.id === msg.senderId)?.name || 'Аудио')
                         })}
@@ -1708,28 +1794,35 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           )}
         </div>
       ) : (
-        <div className="p-3 bg-[var(--tg-sidebar)] border-t border-[var(--tg-border)] flex items-end gap-2 z-20 relative">
-          {/* Hidden file inputs */}
+        <div className="p-2.5 sm:p-3 bg-[var(--tg-sidebar)] border-t border-[var(--tg-border)] flex items-end gap-2 z-20 relative">
+          {isUploadingMedia && (
+            <div className="absolute -top-9 left-1/2 -translate-x-1/2 bg-[#17212b]/95 border border-[#5288c1]/50 text-white text-xs px-3.5 py-1.5 rounded-full shadow-xl flex items-center gap-2 z-40 animate-pop-in">
+              <Loader2 size={14} className="animate-spin text-[#5288c1]" />
+              <span>Загрузка и отправка файла...</span>
+            </div>
+          )}
+
+          {/* Accessible off-screen file inputs (compatible with all Android WebViews & browsers) */}
           <input
             type="file"
             ref={photoVideoInputRef}
             onChange={(e) => handleMediaUpload(e)}
             accept="image/*,video/*"
-            className="hidden"
+            className="sr-only"
           />
           <input
             type="file"
             ref={audioInputRef}
             onChange={(e) => handleMediaUpload(e, 'audio')}
-            accept="audio/*"
-            className="hidden"
+            accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.opus"
+            className="sr-only"
           />
           <input
             type="file"
             ref={fileDocInputRef}
             onChange={(e) => handleMediaUpload(e, 'file')}
             accept="*/*"
-            className="hidden"
+            className="sr-only"
           />
 
           {/* Attachment Popup Menu */}
@@ -1743,8 +1836,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setIsAttachMenuOpen(false);
                     photoVideoInputRef.current?.click();
+                    setIsAttachMenuOpen(false);
                   }}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[var(--tg-surface-hover)] text-xs font-medium transition text-left cursor-pointer"
                 >
@@ -1760,8 +1853,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    setIsAttachMenuOpen(false);
                     audioInputRef.current?.click();
+                    setIsAttachMenuOpen(false);
                   }}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[var(--tg-surface-hover)] text-xs font-medium transition text-left cursor-pointer"
                 >
@@ -1770,15 +1863,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   </div>
                   <div>
                     <div className="font-semibold text-[var(--tg-text)]">Музыка / аудио</div>
-                    <div className="text-[10px] text-[var(--tg-text-muted)]">MP3, WAV, FLAC</div>
+                    <div className="text-[10px] text-[var(--tg-text-muted)]">MP3, WAV, M4A, FLAC</div>
                   </div>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => {
-                    setIsAttachMenuOpen(false);
                     fileDocInputRef.current?.click();
+                    setIsAttachMenuOpen(false);
                   }}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[var(--tg-surface-hover)] text-xs font-medium transition text-left cursor-pointer"
                 >
@@ -2331,9 +2424,36 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         chatId={chat.id}
         currentWallpaper={chatWallpaper}
         onClose={() => setIsWallpaperModalOpen(false)}
-        onSaveWallpaper={(newWallpaper) => {
+        onSaveWallpaper={(newWallpaper, applyToAllChats) => {
           setChatWallpaper(newWallpaper);
-          localStorage.setItem(`pritonn_chat_wallpaper_${chat.id}`, newWallpaper);
+          try {
+            if (newWallpaper) {
+              localStorage.setItem(`pritonn_chat_wallpaper_${chat.id}`, newWallpaper);
+            } else {
+              localStorage.removeItem(`pritonn_chat_wallpaper_${chat.id}`);
+            }
+            if (applyToAllChats) {
+              if (newWallpaper) {
+                localStorage.setItem('pritonn_global_wallpaper', newWallpaper);
+              } else {
+                localStorage.removeItem('pritonn_global_wallpaper');
+              }
+            }
+          } catch (err) {
+            console.warn('localStorage wallpaper save warning:', err);
+          }
+
+          // Persist wallpaper on server for this chat (unless huge inline DataURL)
+          if (!newWallpaper.startsWith('data:') || newWallpaper.length < 500000) {
+            fetch(`${API_BASE_URL}/api/chats/${chat.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                wallpaper: newWallpaper,
+                currentUserId: currentUser.id,
+              }),
+            }).catch(() => {});
+          }
         }}
       />
 

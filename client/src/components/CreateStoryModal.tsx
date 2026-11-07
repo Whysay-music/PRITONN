@@ -1,135 +1,189 @@
-import React, { useState } from 'react';
-import { X, Sparkles, Image as ImageIcon } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { X, Camera, Upload, Sparkles, Send, Image as ImageIcon } from 'lucide-react';
+import { User, Story } from '../types';
+import { API_BASE_URL } from '../config';
 
 interface CreateStoryModalProps {
   isOpen: boolean;
+  currentUser: User;
   onClose: () => void;
-  onSubmit: (mediaUrl: string, caption: string) => void;
+  onStoryCreated: (story: Story) => void;
 }
-
-const PRESET_STORIES = [
-  'https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=80',
-];
 
 export const CreateStoryModal: React.FC<CreateStoryModalProps> = ({
   isOpen,
+  currentUser,
   onClose,
-  onSubmit,
+  onStoryCreated,
 }) => {
-  const [mediaUrl, setMediaUrl] = useState(PRESET_STORIES[0]);
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
   const [caption, setCaption] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!mediaUrl.trim()) return;
-    onSubmit(mediaUrl, caption);
-    onClose();
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isVid = file.type.startsWith('video/');
+    setMediaType(isVid ? 'video' : 'image');
+
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch(`${API_BASE_URL}/api/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMediaUrl(data.url);
+        setIsUploading(false);
+        return;
+      }
+    } catch (err) {
+      console.warn('Upload error, using fallback DataURL:', err);
+    }
+
+    // Fallback DataURL
+    const reader = new FileReader();
+    reader.onload = () => {
+      setMediaUrl(reader.result as string);
+      setIsUploading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = async () => {
+    if (!mediaUrl) return;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/stories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          mediaUrl,
+          mediaType,
+          caption: caption.trim(),
+        }),
+      });
+
+      if (res.ok) {
+        const newStory: Story = await res.json();
+        onStoryCreated(newStory);
+        onClose();
+        setMediaUrl(null);
+        setCaption('');
+      }
+    } catch (err) {
+      console.error('Create story error:', err);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-[var(--tg-surface)] text-[var(--tg-text)] w-full max-w-md rounded-2xl overflow-hidden shadow-2xl border border-[var(--tg-border)] flex flex-col">
+    <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
+      <div className="relative w-full max-w-md bg-[var(--tg-sidebar)] rounded-3xl border border-[var(--tg-card-border)] shadow-2xl overflow-hidden flex flex-col text-[var(--tg-text)]">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-[var(--tg-border)]">
-          <div className="flex items-center gap-2 font-semibold text-base">
-            <Sparkles className="text-amber-400" size={18} />
-            <span>Опубликовать историю</span>
+        <div className="px-5 py-4 border-b border-[var(--tg-card-border)] flex items-center justify-between bg-[var(--tg-surface)]/60">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">📸</span>
+            <h3 className="font-bold text-base">Опубликовать историю</h3>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-[var(--tg-text-muted)] hover:text-[var(--tg-text)] p-1 rounded-full"
+            className="p-1.5 rounded-full hover:bg-[var(--tg-surface-hover)] text-[var(--tg-text-muted)] hover:text-white transition cursor-pointer"
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
 
-        {/* Content */}
-        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
-          <div>
-            <label className="text-xs font-medium text-[var(--tg-text-muted)] block mb-1.5">
-              Предпросмотр фото
-            </label>
-            <div className="w-full h-48 rounded-xl overflow-hidden bg-black/20 border border-[var(--tg-border)] relative">
-              <img
-                src={mediaUrl}
-                alt="Story preview"
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = PRESET_STORIES[0];
-                }}
-              />
+        {/* Media Preview or Picker */}
+        <div className="p-5 flex flex-col items-center gap-4">
+          {mediaUrl ? (
+            <div className="relative w-full aspect-[9/14] max-h-96 rounded-2xl overflow-hidden bg-black shadow-inner flex items-center justify-center">
+              {mediaType === 'video' ? (
+                <video src={mediaUrl} controls autoPlay loop className="w-full h-full object-contain" />
+              ) : (
+                <img src={mediaUrl} alt="Story preview" className="w-full h-full object-contain" />
+              )}
+              <button
+                type="button"
+                onClick={() => setMediaUrl(null)}
+                className="absolute top-3 right-3 p-2 rounded-full bg-black/60 text-white hover:bg-black/80 transition cursor-pointer"
+                title="Сменить фото"
+              >
+                <X size={16} />
+              </button>
             </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-[var(--tg-text-muted)] block mb-1.5">
-              Выберите фото или вставьте ссылку:
-            </label>
-            <div className="grid grid-cols-4 gap-2 mb-2">
-              {PRESET_STORIES.map((url, i) => (
-                <div
-                  key={i}
-                  onClick={() => setMediaUrl(url)}
-                  className={`h-14 rounded-lg overflow-hidden cursor-pointer border-2 transition ${
-                    mediaUrl === url
-                      ? 'border-blue-500 scale-105'
-                      : 'border-transparent opacity-70 hover:opacity-100'
-                  }`}
-                >
-                  <img
-                    src={url}
-                    alt="preset"
-                    className="w-full h-full object-cover"
-                  />
+          ) : (
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full aspect-[9/12] max-h-80 rounded-2xl border-2 border-dashed border-[var(--tg-border-accent)]/50 bg-[var(--tg-surface)]/40 hover:bg-[var(--tg-surface)]/70 transition flex flex-col items-center justify-center gap-3 cursor-pointer group"
+            >
+              <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-lg group-hover:scale-110 transition-transform">
+                <Camera size={26} />
+              </div>
+              <div className="text-center">
+                <div className="font-semibold text-sm text-[var(--tg-text)]">
+                  {isUploading ? 'Загрузка медиа...' : 'Выберите фото или видео'}
                 </div>
-              ))}
+                <div className="text-xs text-[var(--tg-text-muted)] mt-0.5">
+                  История будет видна всем контактам 24 часа
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2 bg-[var(--tg-sidebar)] px-3 py-2 rounded-xl border border-[var(--tg-border)]">
-              <ImageIcon size={16} className="text-[var(--tg-text-muted)]" />
-              <input
-                type="text"
-                value={mediaUrl}
-                onChange={(e) => setMediaUrl(e.target.value)}
-                placeholder="https://..."
-                className="bg-transparent text-xs w-full outline-none text-[var(--tg-text)]"
-              />
-            </div>
-          </div>
+          )}
 
-          <div>
-            <label className="text-xs font-medium text-[var(--tg-text-muted)] block mb-1.5">
-              Подпись к истории
-            </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*,video/*"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+
+          {/* Caption Input */}
+          <div className="w-full">
             <input
               type="text"
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
-              placeholder="Добавьте яркую подпись..."
-              className="w-full bg-[var(--tg-sidebar)] px-3 py-2.5 rounded-xl border border-[var(--tg-border)] text-sm outline-none text-[var(--tg-text)] placeholder-[var(--tg-text-muted)]"
+              placeholder="Добавьте подпись к истории..."
+              className="w-full px-4 py-2.5 bg-[var(--tg-surface)] border border-[var(--tg-card-border)] rounded-xl text-sm text-[var(--tg-text)] placeholder-[var(--tg-text-muted)] outline-none focus:border-[var(--tg-border-accent)] transition"
+              maxLength={150}
             />
           </div>
+        </div>
 
-          <div className="flex justify-end gap-3 mt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl text-sm text-[var(--tg-text-muted)] hover:bg-[var(--tg-surface-hover)] transition"
-            >
-              Отмена
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 bg-[var(--tg-accent)] hover:bg-[var(--tg-accent-hover)] text-white text-sm font-medium rounded-xl shadow-md transition"
-            >
-              Опубликовать
-            </button>
-          </div>
-        </form>
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-[var(--tg-card-border)] flex items-center justify-end gap-2 bg-[var(--tg-surface)]/60">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl text-xs font-semibold text-[var(--tg-text-muted)] hover:bg-[var(--tg-surface-hover)] transition cursor-pointer"
+          >
+            Отмена
+          </button>
+          <button
+            type="button"
+            disabled={!mediaUrl || isUploading}
+            onClick={handleSubmit}
+            className={`px-5 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md ${
+              mediaUrl && !isUploading
+                ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:opacity-95 active:scale-95'
+                : 'bg-gray-600/30 text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            <Send size={14} />
+            <span>Опубликовать</span>
+          </button>
+        </div>
       </div>
     </div>
   );

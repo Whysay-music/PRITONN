@@ -33,3 +33,5 @@ server/uploads/*.apk
 server/uploads/*.exe
 
 
+
+scratch/

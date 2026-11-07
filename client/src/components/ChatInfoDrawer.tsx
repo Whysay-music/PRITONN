@@ -121,34 +121,65 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {/* Cover Banner */}
+        <div className="relative w-full h-28 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 overflow-hidden shadow-inner">
+          {targetUser?.bannerUrl ? (
+            <img src={targetUser.bannerUrl} alt="Banner" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full bg-gradient-to-br from-[#2481cc]/80 via-[#1f3a56] to-[#121c27] flex items-center justify-center opacity-85" />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-[var(--tg-sidebar)] via-transparent to-transparent opacity-80" />
+        </div>
+
         {/* Profile Card */}
-        <div className="flex flex-col items-center p-6 border-b border-[var(--tg-border)]">
+        <div className="flex flex-col items-center px-6 pb-6 pt-0 border-b border-[var(--tg-border)] -mt-12 relative z-10">
           <div
             onClick={() => onOpenEditChatModal && (chat.type === 'group' || chat.type === 'channel') && onOpenEditChatModal(chat)}
-            className={`relative mb-3 ${onOpenEditChatModal && (chat.type === 'group' || chat.type === 'channel') ? 'cursor-pointer group' : ''}`}
+            className={`relative mb-2 ${onOpenEditChatModal && (chat.type === 'group' || chat.type === 'channel') ? 'cursor-pointer group' : ''}`}
             title="Нажмите для смены фото чата"
           >
             <img
               src={getAvatarUrl(displayAvatar, displayName)}
               onError={(e) => handleAvatarError(e, displayName)}
               alt={displayName}
-              className="w-24 h-24 rounded-full object-cover border-2 border-blue-500 shadow-md group-hover:brightness-90 transition"
+              className="w-24 h-24 rounded-full object-cover border-4 border-[var(--tg-sidebar)] shadow-xl group-hover:brightness-90 transition"
             />
             {onOpenEditChatModal && (chat.type === 'group' || chat.type === 'channel') && (
               <div className="absolute inset-0 rounded-full bg-black/35 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition">
                 <Camera size={24} />
               </div>
             )}
-            {isUserVerified(targetUser) && (
+            {targetUser?.emojiStatus ? (
+              <div className="absolute bottom-0 right-0 bg-[var(--tg-sidebar)] rounded-full p-0.5 text-lg ring-2 ring-[var(--tg-card-border)] shadow" title="Эмодзи-статус">
+                {targetUser.emojiStatus}
+              </div>
+            ) : isUserVerified(targetUser) ? (
               <div className="absolute bottom-0 right-0 bg-[var(--tg-sidebar)] rounded-full p-0.5">
                 <TelegramVerifiedBadge size={22} />
               </div>
-            )}
+            ) : null}
           </div>
           <h2 className="font-bold text-base text-center flex items-center justify-center gap-1.5">
             <span>{displayName}</span>
             {isUserVerified(targetUser) && <TelegramVerifiedBadge size={17} />}
           </h2>
+
+          {/* Badges Row */}
+          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap justify-center">
+            {targetUser?.username?.toLowerCase() === 'admin' && (
+              <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold flex items-center gap-1 shadow-sm">
+                👑 Основатель
+              </span>
+            )}
+            <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25 text-[10px] font-medium flex items-center gap-1 shadow-sm">
+              💎 Участник
+            </span>
+            {targetUser?.gifts && targetUser.gifts.length > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/25 text-[10px] font-semibold flex items-center gap-1 shadow-sm">
+                🎁 Топ-Донатер
+              </span>
+            )}
+          </div>
           <span className="text-xs text-[var(--tg-text-muted)] mt-0.5">
             {chat.type === 'channel'
               ? `${(chat.subscribersCount || 1).toLocaleString()} подписчиков`

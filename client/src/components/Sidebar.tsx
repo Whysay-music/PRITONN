@@ -699,6 +699,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div className="flex items-center justify-between mb-0.5">
                     <div className="flex items-center gap-1 font-semibold text-sm truncate">
                       <span className="truncate">{displayName}</span>
+                      {targetUser?.emojiStatus && (
+                        <span className="text-xs flex-shrink-0 select-none" title="Эмодзи-статус">
+                          {targetUser.emojiStatus}
+                        </span>
+                      )}
+                      {chat.liveStream?.isLive && (
+                        <span className="px-1.5 py-0.2 rounded-md bg-rose-600 text-white text-[9px] font-bold animate-pulse flex-shrink-0">
+                          LIVE
+                        </span>
+                      )}
                       {targetUser?.listeningTrack?.isPlaying && (
                         <span
                           className="text-[10.5px] text-cyan-400 font-semibold flex items-center gap-0.5 ml-1 animate-pulse flex-shrink-0"

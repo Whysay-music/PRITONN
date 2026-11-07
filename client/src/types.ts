@@ -39,15 +39,25 @@ export interface User {
     artist?: string;
     isPlaying: boolean;
   } | null;
+  bannerUrl?: string;
+  badges?: string[];
+  pritonnCoins?: number;
+  customStickers?: string[];
+  isVideoAvatar?: boolean;
 }
 
 export interface Story {
   id: string;
   userId: string;
+  userName?: string;
+  userAvatar?: string;
   mediaUrl: string;
+  mediaType?: 'image' | 'video';
   caption: string;
   timestamp: number;
   views: number;
+  viewers?: Array<{ userId: string; userName: string; timestamp: number }>;
+  likes?: string[];
   user?: User;
 }
 
@@ -83,6 +93,14 @@ export interface Chat {
     color?: string;
     createdAt: number;
   }>;
+  liveStream?: {
+    isLive: boolean;
+    hostId: string;
+    hostName: string;
+    title?: string;
+    startedAt: number;
+    viewersCount?: number;
+  } | null;
 }
 
 export interface ReplyInfo {

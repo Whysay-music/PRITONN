@@ -38,6 +38,9 @@ interface TelegramDrawerMenuProps {
   onOpenSavedMessages: () => void;
   onOpenCustomFolders?: () => void;
   onOpenMiniApp?: () => void;
+  onOpenEmojiStatus?: () => void;
+  onOpenStickerMaker?: () => void;
+  onOpenTapGame?: () => void;
   onToggleTheme: () => void;
   onLogout: () => void;
 }
@@ -55,6 +58,9 @@ export const TelegramDrawerMenu: React.FC<TelegramDrawerMenuProps> = ({
   onOpenSavedMessages,
   onOpenCustomFolders,
   onOpenMiniApp,
+  onOpenEmojiStatus,
+  onOpenStickerMaker,
+  onOpenTapGame,
   onToggleTheme,
   onLogout,
 }) => {
@@ -288,6 +294,88 @@ export const TelegramDrawerMenu: React.FC<TelegramDrawerMenuProps> = ({
                   </div>
                   <div className="text-[10px] text-[var(--tg-text-muted)] truncate">
                     Игры, веб-боты и web3 каталоги
+                  </div>
+                </div>
+              </div>
+              <ChevronRight size={15} className="text-[var(--tg-text-muted)] group-hover:translate-x-0.5 transition-transform flex-shrink-0 ml-1" />
+            </button>
+          )}
+
+          {/* PRITONN Tap & Farm Game */}
+          {onOpenTapGame && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenTapGame();
+              }}
+              className="w-full text-left p-2.5 rounded-2xl tg-framed-btn border-amber-500/30 hover:border-amber-500/60 flex items-center justify-between cursor-pointer group"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 flex items-center justify-center flex-shrink-0 text-base group-hover:scale-105 transition-transform">
+                  🪙
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-[var(--tg-text)] leading-tight truncate">
+                    PRITONN Tap & Farm
+                  </div>
+                  <div className="text-[10px] text-amber-300/80 truncate">
+                    Кликер-игра с монетами и бустами
+                  </div>
+                </div>
+              </div>
+              <ChevronRight size={15} className="text-[var(--tg-text-muted)] group-hover:translate-x-0.5 transition-transform flex-shrink-0 ml-1" />
+            </button>
+          )}
+
+          {/* Sticker Maker */}
+          {onOpenStickerMaker && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenStickerMaker();
+              }}
+              className="w-full text-left p-2.5 rounded-2xl tg-framed-btn flex items-center justify-between cursor-pointer group"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-pink-500/15 border border-pink-500/30 text-pink-400 flex items-center justify-center flex-shrink-0 text-base group-hover:scale-105 transition-transform">
+                  🎨
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-[var(--tg-text)] leading-tight truncate">
+                    Конструктор стикеров
+                  </div>
+                  <div className="text-[10px] text-[var(--tg-text-muted)] truncate">
+                    Создайте стикерпак из любого фото
+                  </div>
+                </div>
+              </div>
+              <ChevronRight size={15} className="text-[var(--tg-text-muted)] group-hover:translate-x-0.5 transition-transform flex-shrink-0 ml-1" />
+            </button>
+          )}
+
+          {/* Emoji Status */}
+          {onOpenEmojiStatus && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenEmojiStatus();
+              }}
+              className="w-full text-left p-2.5 rounded-2xl tg-framed-btn flex items-center justify-between cursor-pointer group"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-yellow-500/15 border border-yellow-500/30 text-yellow-300 flex items-center justify-center flex-shrink-0 text-base group-hover:scale-105 transition-transform">
+                  ✨
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-[var(--tg-text)] leading-tight truncate flex items-center gap-1.5">
+                    <span>Эмодзи-статус</span>
+                    {currentUser.emojiStatus && <span>{currentUser.emojiStatus}</span>}
+                  </div>
+                  <div className="text-[10px] text-[var(--tg-text-muted)] truncate">
+                    Значок возле имени во всех чатах
                   </div>
                 </div>
               </div>

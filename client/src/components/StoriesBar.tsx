@@ -6,59 +6,102 @@ import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 interface StoriesBarProps {
   stories: Story[];
   currentUser: User;
-  onSelectStory: (story: Story) => void;
-  onCreateStory: () => void;
+  onOpenCreateStory?: () => void;
+  onCreateStory?: () => void;
+  onOpenStoryViewer?: (storyIndex: number) => void;
+  onSelectStory?: (story: Story) => void;
 }
 
 export const StoriesBar: React.FC<StoriesBarProps> = ({
   stories,
   currentUser,
-  onSelectStory,
+  onOpenCreateStory,
   onCreateStory,
+  onOpenStoryViewer,
+  onSelectStory,
 }) => {
+  const handleCreate = () => {
+    if (onOpenCreateStory) onOpenCreateStory();
+    else if (onCreateStory) onCreateStory();
+  };
+
+  const handleSelect = (idx: number, story: Story) => {
+    if (onOpenStoryViewer) onOpenStoryViewer(idx);
+    else if (onSelectStory) onSelectStory(story);
+  };
+
+  // Group stories by user to avoid duplicate avatar rings
+  const userStoriesMap = new Map<string, { latestStory: Story; count: number; firstIndex: number }>();
+
+  stories.forEach((s, idx) => {
+    if (!userStoriesMap.has(s.userId)) {
+      userStoriesMap.set(s.userId, { latestStory: s, count: 1, firstIndex: idx });
+    } else {
+      const entry = userStoriesMap.get(s.userId)!;
+      entry.count += 1;
+    }
+  });
+
+  const distinctUserStories = Array.from(userStoriesMap.entries());
+
   return (
-    <div className="flex items-center gap-3 px-3 py-2 overflow-x-auto border-b border-[var(--tg-border)] scrollbar-none select-none">
-      {/* Create story / My story */}
+    <div className="w-full bg-[var(--tg-sidebar)]/80 backdrop-blur-md border-b border-[var(--tg-border)] px-3 py-2 flex items-center gap-3 overflow-x-auto no-scrollbar select-none z-10">
+      {/* Current User Story Circle */}
       <div
-        onClick={onCreateStory}
-        className="flex flex-col items-center flex-shrink-0 cursor-pointer group"
+        onClick={handleCreate}
+        className="flex flex-col items-center gap-1 cursor-pointer group flex-shrink-0"
       >
-        <div className="relative w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-cyan-500 to-blue-600 hover:scale-105 transition-transform">
-          <img
-            src={getAvatarUrl(currentUser.avatar, currentUser.name)}
-            onError={(e) => handleAvatarError(e, currentUser.name)}
-            alt="My avatar"
-            className="w-full h-full object-cover rounded-full border-2 border-[var(--tg-sidebar)]"
-          />
-          <div className="absolute bottom-0 right-0 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center border-2 border-[var(--tg-sidebar)] text-white">
-            <Plus size={10} strokeWidth={3} />
+        <div className="relative">
+          <div className="w-13 h-13 rounded-full p-0.5 border-2 border-dashed border-[var(--tg-border-accent)]/60 group-hover:border-[var(--tg-border-accent)] transition-all">
+            <img
+              src={getAvatarUrl(currentUser.avatar, currentUser.name)}
+              onError={(e) => handleAvatarError(e, currentUser.name)}
+              alt="Ваша история"
+              className="w-full h-full rounded-full object-cover group-hover:scale-105 transition-transform"
+            />
+          </div>
+          <div className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-[var(--tg-accent)] text-white flex items-center justify-center shadow-md ring-2 ring-[var(--tg-sidebar)]">
+            <Plus size={11} strokeWidth={3} />
           </div>
         </div>
-        <span className="text-[11px] text-[var(--tg-text-muted)] mt-1 truncate max-w-[58px]">
+        <span className="text-[10px] text-[var(--tg-text-muted)] group-hover:text-[var(--tg-text)] truncate max-w-[60px] text-center font-medium">
           Ваша история
         </span>
       </div>
 
-      {/* Stories from others */}
-      {stories.map((story) => {
-        const user = story.user;
-        if (!user) return null;
+      {/* Friends Stories Rings */}
+      {distinctUserStories.map(([uId, data]) => {
+        const { latestStory, count, firstIndex } = data;
+        const authorName = latestStory.userName || latestStory.user?.name || 'Пользователь';
+        const authorAvatar = latestStory.userAvatar || latestStory.user?.avatar;
+        const isMyOwn = uId === currentUser.id;
+
         return (
           <div
-            key={story.id}
-            onClick={() => onSelectStory(story)}
-            className="flex flex-col items-center flex-shrink-0 cursor-pointer group"
+            key={uId}
+            onClick={() => handleSelect(firstIndex, latestStory)}
+            className="flex flex-col items-center gap-1 cursor-pointer group flex-shrink-0"
           >
-            <div className="w-14 h-14 rounded-full p-[2.5px] bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 hover:scale-105 transition-transform">
-              <img
-                src={getAvatarUrl(user.avatar, user.name)}
-                onError={(e) => handleAvatarError(e, user.name)}
-                alt={user.name}
-                className="w-full h-full object-cover rounded-full border-2 border-[var(--tg-sidebar)]"
-              />
+            <div className="relative">
+              {/* Gradient Glowing Ring */}
+              <div className="w-13 h-13 rounded-full p-0.5 bg-gradient-to-tr from-purple-500 via-rose-500 to-amber-500 shadow group-hover:shadow-[0_0_12px_rgba(244,63,94,0.45)] group-hover:scale-105 transition-all">
+                <div className="w-full h-full rounded-full p-0.5 bg-[var(--tg-sidebar)]">
+                  <img
+                    src={getAvatarUrl(authorAvatar, authorName)}
+                    onError={(e) => handleAvatarError(e, authorName)}
+                    alt={authorName}
+                    className="w-full h-full rounded-full object-cover"
+                  />
+                </div>
+              </div>
+              {count > 1 && (
+                <span className="absolute -top-1 -right-1 px-1 bg-[var(--tg-accent)] text-white text-[9px] font-bold rounded-full border border-[var(--tg-sidebar)] shadow">
+                  {count}
+                </span>
+              )}
             </div>
-            <span className="text-[11px] text-[var(--tg-text)] mt-1 truncate max-w-[58px] text-center font-medium">
-              {user.name.split(' ')[0]}
+            <span className="text-[10px] text-[var(--tg-text)] font-medium truncate max-w-[62px] text-center">
+              {isMyOwn ? 'Моя' : authorName.split(' ')[0]}
             </span>
           </div>
         );

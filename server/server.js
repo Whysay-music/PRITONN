@@ -1025,6 +1025,56 @@ app.post('/api/stories', (req, res) => {
   res.status(201).json(populated);
 });
 
+// Story Views & Reactions
+app.post('/api/stories/:storyId/view', (req, res) => {
+  const { storyId } = req.params;
+  const { userId, userName } = req.body;
+  const story = db.stories.find(s => s.id === storyId);
+  if (!story) return res.status(404).json({ error: 'Story not found' });
+
+  if (!story.viewers) story.viewers = [];
+  if (userId && !story.viewers.some(v => v.userId === userId)) {
+    story.viewers.push({
+      userId,
+      userName: userName || 'Пользователь',
+      timestamp: Date.now()
+    });
+    story.views = story.viewers.length;
+    saveData(db);
+    io.emit('story_viewed', { storyId, viewers: story.viewers, views: story.views });
+  }
+  res.json({ success: true, story });
+});
+
+app.post('/api/stories/:storyId/like', (req, res) => {
+  const { storyId } = req.params;
+  const { userId } = req.body;
+  const story = db.stories.find(s => s.id === storyId);
+  if (!story) return res.status(404).json({ error: 'Story not found' });
+
+  if (!story.likes) story.likes = [];
+  const idx = story.likes.indexOf(userId);
+  if (idx !== -1) {
+    story.likes.splice(idx, 1);
+  } else {
+    story.likes.push(userId);
+  }
+  saveData(db);
+  io.emit('story_liked', { storyId, likes: story.likes });
+  res.json({ success: true, likes: story.likes });
+});
+
+app.delete('/api/stories/:storyId', (req, res) => {
+  const { storyId } = req.params;
+  const idx = db.stories.findIndex(s => s.id === storyId);
+  if (idx !== -1) {
+    db.stories.splice(idx, 1);
+    saveData(db);
+    io.emit('story_deleted', { storyId });
+  }
+  res.json({ success: true, storyId });
+});
+
 // --- CHATS API (STRICT ISOLATION) ---
 
 // Get chats strictly belonging to this user
@@ -2083,7 +2133,7 @@ app.get('/api/app-version', (req, res) => {
   } catch {}
   res.json({
     version: pkgVersion,
-    releaseNotes: 'PRITONN v' + pkgVersion + ' — Виртуальные подарки и Telegram Stars, секретные фото (1 просмотр), музыкальный статус «Слушает сейчас», совместный просмотр видео (Watch Together), AI шумоподавление и фон камеры, темы/форумы в группах, быстрые шаблоны ответов и переводчик сообщений.',
+    releaseNotes: 'PRITONN v' + pkgVersion + ' — Истории (Stories 24ч) с реакциями, обложки и эмодзи-статусы профиля, конструктор стикеров (Sticker Maker), Mini App Кликер PRITONN Coin, прямые трансляции в каналах (Live Streams), встроенный редактор фото перед отправкой.',
     apkUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_v${pkgVersion}.apk`,
     winSetupUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_Setup_${pkgVersion}.exe`,
     releasePageUrl: 'https://github.com/Whysay-music/PRITONN/releases/latest',
@@ -2175,6 +2225,82 @@ app.put('/api/users/:userId/premium', (req, res) => {
   saveData(db);
   io.emit('user_updated', user);
   res.json(user);
+});
+
+// Profile Extras: Banner, Emoji Status, Badges, Video Avatar
+app.put('/api/users/:userId/profile-extras', (req, res) => {
+  const { userId } = req.params;
+  const { bannerUrl, emojiStatus, badges, isVideoAvatar } = req.body;
+  const user = db.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (bannerUrl !== undefined) user.bannerUrl = bannerUrl;
+  if (emojiStatus !== undefined) user.emojiStatus = emojiStatus;
+  if (badges !== undefined) user.badges = badges;
+  if (isVideoAvatar !== undefined) user.isVideoAvatar = isVideoAvatar;
+
+  saveData(db);
+  const safeUser = (({ password, ...u }) => u)(user);
+  io.emit('user_updated', safeUser);
+  res.json({ success: true, user: safeUser });
+});
+
+// PRITONN Coins for Mini Apps Tap Game
+app.post('/api/users/:userId/coins', (req, res) => {
+  const { userId } = req.params;
+  const { amount } = req.body;
+  const user = db.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  user.pritonnCoins = Math.max(0, (user.pritonnCoins || 0) + (Number(amount) || 0));
+  saveData(db);
+  res.json({ success: true, pritonnCoins: user.pritonnCoins });
+});
+
+// User Custom Stickers (Sticker Maker)
+app.post('/api/users/:userId/stickers', (req, res) => {
+  const { userId } = req.params;
+  const { stickerUrl } = req.body;
+  const user = db.users.find(u => u.id === userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  if (!user.customStickers) user.customStickers = [];
+  if (stickerUrl && !user.customStickers.includes(stickerUrl)) {
+    user.customStickers.unshift(stickerUrl);
+  }
+  saveData(db);
+  res.json({ success: true, customStickers: user.customStickers });
+});
+
+// Channel Live Streaming API
+app.post('/api/chats/:chatId/live/start', (req, res) => {
+  const { chatId } = req.params;
+  const { hostId, hostName, title } = req.body;
+  const chat = db.chats.find(c => c.id === chatId);
+  if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+  chat.liveStream = {
+    isLive: true,
+    hostId,
+    hostName: hostName || 'Стример',
+    title: title || `Прямой эфир в канале ${chat.name}`,
+    startedAt: Date.now(),
+    viewersCount: 1
+  };
+  saveData(db);
+  io.emit('channel_live_started', { chatId, liveStream: chat.liveStream });
+  res.json({ success: true, liveStream: chat.liveStream });
+});
+
+app.post('/api/chats/:chatId/live/stop', (req, res) => {
+  const { chatId } = req.params;
+  const chat = db.chats.find(c => c.id === chatId);
+  if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+  chat.liveStream = null;
+  saveData(db);
+  io.emit('channel_live_stopped', { chatId });
+  res.json({ success: true });
 });
 
 // Custom Folders
@@ -2317,6 +2443,30 @@ io.on('connection', (socket) => {
     if (!payload?.chatId) return;
     socket.to(`voice_room_${payload.chatId}`).emit('watch_together_sync', payload);
     socket.broadcast.emit('watch_together_sync', payload);
+  });
+
+  // Channel Live Stream Signaling & Frames
+  socket.on('channel_live_join', (data) => {
+    if (!data?.chatId) return;
+    const chat = db.chats.find(c => c.id === data.chatId);
+    if (chat && chat.liveStream) {
+      chat.liveStream.viewersCount = (chat.liveStream.viewersCount || 1) + 1;
+      io.emit('channel_live_viewers', { chatId: data.chatId, viewersCount: chat.liveStream.viewersCount });
+    }
+  });
+
+  socket.on('channel_live_leave', (data) => {
+    if (!data?.chatId) return;
+    const chat = db.chats.find(c => c.id === data.chatId);
+    if (chat && chat.liveStream) {
+      chat.liveStream.viewersCount = Math.max(1, (chat.liveStream.viewersCount || 2) - 1);
+      io.emit('channel_live_viewers', { chatId: data.chatId, viewersCount: chat.liveStream.viewersCount });
+    }
+  });
+
+  socket.on('channel_live_frame', (data) => {
+    if (!data?.chatId) return;
+    socket.broadcast.emit('channel_live_frame_' + data.chatId, data);
   });
 
   socket.on('user_offline', ({ userId }) => {

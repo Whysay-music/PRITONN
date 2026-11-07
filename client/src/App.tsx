@@ -5,6 +5,10 @@ import { Sidebar } from './components/Sidebar';
 import { ChatArea } from './components/ChatArea';
 import { ChatInfoDrawer } from './components/ChatInfoDrawer';
 import { StoriesModal } from './components/StoriesModal';
+import { StoryViewerModal } from './components/StoryViewerModal';
+import { PritonnTapGameModal } from './components/PritonnTapGameModal';
+import { StickerMakerModal } from './components/StickerMakerModal';
+import { EmojiStatusPickerModal } from './components/EmojiStatusPickerModal';
 import { CreateStoryModal } from './components/CreateStoryModal';
 import { NewChatModal } from './components/NewChatModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -151,6 +155,9 @@ export const App: React.FC = () => {
   // Modals & Drawers
   const [activeStory, setActiveStory] = useState<Story | null>(null);
   const [isCreateStoryOpen, setIsCreateStoryOpen] = useState(false);
+  const [isTapGameOpen, setIsTapGameOpen] = useState(false);
+  const [isStickerMakerOpen, setIsStickerMakerOpen] = useState(false);
+  const [isEmojiStatusPickerOpen, setIsEmojiStatusPickerOpen] = useState(false);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isVoiceCallOpen, setIsVoiceCallOpen] = useState(false);
@@ -1242,6 +1249,54 @@ export const App: React.FC = () => {
     }
   };
 
+  // Emoji Status Picker Handler
+  const handleSelectEmojiStatus = async (emoji: string | undefined) => {
+    if (!currentUser) return;
+    try {
+      await fetch(`${API_BASE_URL}/api/users/${currentUser.id}/profile-extras`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emojiStatus: emoji }),
+      });
+      setCurrentUser((prev) => (prev ? { ...prev, emojiStatus: emoji || undefined } : prev));
+    } catch (err) {
+      console.error('Failed to update emoji status:', err);
+    }
+  };
+
+  // Sticker Maker Save Handler
+  const handleSaveSticker = async (stickerUrl: string) => {
+    if (!currentUser) return;
+    try {
+      await fetch(`${API_BASE_URL}/api/users/${currentUser.id}/stickers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stickerUrl }),
+      });
+      setCurrentUser((prev) => (prev ? {
+        ...prev,
+        customStickers: [...(prev.customStickers || []), stickerUrl],
+      } : prev));
+    } catch (err) {
+      console.error('Failed to save custom sticker:', err);
+    }
+  };
+
+  // Tap Game Coins Sync Handler
+  const handleUpdateCoins = async (coins: number) => {
+    if (!currentUser) return;
+    try {
+      await fetch(`${API_BASE_URL}/api/users/${currentUser.id}/coins`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: coins }),
+      });
+      setCurrentUser((prev) => (prev ? { ...prev, pritonnCoins: coins } : prev));
+    } catch (err) {
+      console.error('Failed to update coins:', err);
+    }
+  };
+
   // Create Story
   const handleCreateStory = async (mediaUrl: string, caption: string) => {
     if (!currentUser) return;
@@ -1671,20 +1726,44 @@ export const App: React.FC = () => {
         />
       </div>
 
-      {/* Fullscreen Story Viewer */}
-      <StoriesModal
-        story={activeStory}
-        stories={stories}
-        currentUser={currentUser}
-        onClose={() => setActiveStory(null)}
-        onSelectStory={(s) => setActiveStory(s)}
-      />
+      {/* Fullscreen Story Viewer Modal */}
+      {activeStory && (
+        <StoryViewerModal
+          isOpen={!!activeStory}
+          stories={stories}
+          initialIndex={Math.max(0, stories.findIndex((s) => s.id === activeStory.id))}
+          currentUser={currentUser}
+          onClose={() => setActiveStory(null)}
+          onSendDirectMessage={(targetUserId: string, text: string) => {
+            const dmChat = chats.find(
+              (c) => c.type === 'direct' && c.targetUser?.id === targetUserId
+            );
+            if (dmChat) {
+              setActiveChat(dmChat);
+              handleSendMessage({ text: `Ответ на историю: ${text}` });
+            }
+            setActiveStory(null);
+          }}
+          onDeleteStory={async (storyId) => {
+            try {
+              await fetch(`${API_BASE_URL}/api/stories/${storyId}`, { method: 'DELETE' });
+              setStories((prev) => prev.filter((s) => s.id !== storyId));
+            } catch (e) {
+              console.error(e);
+            }
+          }}
+        />
+      )}
 
       {/* Create Story Modal */}
       <CreateStoryModal
         isOpen={isCreateStoryOpen}
+        currentUser={currentUser}
         onClose={() => setIsCreateStoryOpen(false)}
-        onSubmit={handleCreateStory}
+        onStoryCreated={(newStory) => {
+          setStories((prev) => [newStory, ...prev]);
+          setIsCreateStoryOpen(false);
+        }}
       />
 
       {/* New Channel / Group Modal with Friend Invites */}
@@ -1916,6 +1995,39 @@ export const App: React.FC = () => {
         onOpenMiniApp={() => setIsMiniAppOpen(true)}
         onToggleTheme={handleToggleTheme}
         onLogout={handleLogout}
+      />
+
+      {/* PRITONN Tap & Farm Mini App Modal */}
+      <PritonnTapGameModal
+        isOpen={isTapGameOpen}
+        currentUser={currentUser}
+        onClose={() => setIsTapGameOpen(false)}
+        onCoinsUpdated={handleUpdateCoins}
+      />
+
+      {/* Custom Sticker Maker Modal */}
+      <StickerMakerModal
+        isOpen={isStickerMakerOpen}
+        currentUser={currentUser}
+        onClose={() => setIsStickerMakerOpen(false)}
+        onSaveSticker={handleSaveSticker}
+        onSendSticker={activeChat ? (url: string) => {
+          handleSendMessage({
+            text: '',
+            mediaUrl: url,
+            mediaType: 'image',
+            isSticker: true,
+            stickerUrl: url,
+          });
+        } : undefined}
+      />
+
+      {/* Emoji Status Picker Modal */}
+      <EmojiStatusPickerModal
+        isOpen={isEmojiStatusPickerOpen}
+        currentStatus={currentUser.emojiStatus}
+        onClose={() => setIsEmojiStatusPickerOpen(false)}
+        onSelectStatus={handleSelectEmojiStatus}
       />
 
       {/* Telegram Calls History Modal */}

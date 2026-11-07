@@ -77,6 +77,8 @@ import { DiceDuelGame } from './DiceDuelGame';
 import { ChatWallpaperModal } from './ChatWallpaperModal';
 import { ScheduledMessageModal } from './ScheduledMessageModal';
 import { QuickTemplatesModal } from './QuickTemplatesModal';
+import { ChannelLiveStreamModal } from './ChannelLiveStreamModal';
+import { PhotoEditorModal } from './PhotoEditorModal';
 import { translateText, SUPPORTED_LANGUAGES } from '../utils/translator';
 import { getChatDraft, setChatDraft, clearChatDraft } from '../utils/drafts';
 
@@ -207,6 +209,12 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onBack,
 }) => {
   const [inputText, setInputText] = useState('');
+  // Channel Live Stream State
+  const [isLiveStreamOpen, setIsLiveStreamOpen] = useState(false);
+  const [isLiveStreamHost, setIsLiveStreamHost] = useState(false);
+  // Photo Editor before sending
+  const [isPhotoEditorOpen, setIsPhotoEditorOpen] = useState(false);
+  const [pendingPhotoForEdit, setPendingPhotoForEdit] = useState<File | null>(null);
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
@@ -881,6 +889,41 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
   };
 
+  const handleSendEditedPhoto = async (editedFile: File, caption?: string) => {
+    setIsPhotoEditorOpen(false);
+    setPendingPhotoForEdit(null);
+    setIsUploadingMedia(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', editedFile);
+      const res = await fetch(`${API_BASE_URL}/api/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        onSendMessage({
+          text: caption !== undefined ? caption : inputText,
+          mediaUrl: data.url,
+          mediaType: 'image',
+          fileName: data.filename || editedFile.name,
+          fileSize: formatFileSize(editedFile.size),
+          replyToId: replyingTo?.id,
+          isSpoiler: isSpoilerSend,
+          burnTimer: selectedBurnTimer,
+        });
+        setInputText('');
+        setReplyingTo(null);
+        setIsSpoilerSend(false);
+        setSelectedBurnTimer(undefined);
+      }
+    } catch (err) {
+      console.error('Failed to send edited photo:', err);
+    } finally {
+      setIsUploadingMedia(false);
+    }
+  };
+
   // Media / File upload (Photos, Videos, Music, Documents)
   const handleMediaUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -910,6 +953,13 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       mediaType = 'audio';
     } else if (typeHint === 'file') {
       mediaType = 'file';
+    }
+
+    if (mediaType === 'image') {
+      setPendingPhotoForEdit(file);
+      setIsPhotoEditorOpen(true);
+      if (e.target) e.target.value = '';
+      return;
     }
 
     const sizeStr = formatFileSize(file.size);
@@ -1128,6 +1178,24 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
             >
               <Radio size={16} />
               <span className="hidden sm:inline">Голосовой чат</span>
+            </button>
+          )}
+          {chat.type === 'channel' && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsLiveStreamHost(chat.creatorId === currentUser.id);
+                setIsLiveStreamOpen(true);
+              }}
+              className={`p-2 rounded-xl transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer active:scale-95 ${
+                chat.liveStream?.isLive
+                  ? 'text-white bg-rose-600 hover:bg-rose-500 animate-pulse shadow-md shadow-rose-600/30'
+                  : 'text-rose-400 hover:text-rose-300 hover:bg-rose-500/10'
+              }`}
+              title={chat.liveStream?.isLive ? 'Смотреть прямой эфир' : 'Начать прямую трансляцию'}
+            >
+              <Radio size={16} className={chat.liveStream?.isLive ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">{chat.liveStream?.isLive ? 'В ЭФИРЕ' : 'Эфир'}</span>
             </button>
           )}
 
@@ -3111,6 +3179,28 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </div>
         </div>
       )}
+      {/* Channel Live Stream Modal */}
+      {chat.type === 'channel' && (
+        <ChannelLiveStreamModal
+          isOpen={isLiveStreamOpen}
+          chat={chat}
+          currentUser={currentUser}
+          socket={socket}
+          isHost={isLiveStreamHost}
+          onClose={() => setIsLiveStreamOpen(false)}
+        />
+      )}
+
+      {/* Photo Canvas Editor Modal */}
+      <PhotoEditorModal
+        isOpen={isPhotoEditorOpen}
+        imageFile={pendingPhotoForEdit}
+        onClose={() => {
+          setIsPhotoEditorOpen(false);
+          setPendingPhotoForEdit(null);
+        }}
+        onSendPhoto={handleSendEditedPhoto}
+      />
     </div>
   );
 };

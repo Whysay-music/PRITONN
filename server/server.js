@@ -845,17 +845,14 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
   db.messages.push(newMessage);
   saveData(db);
 
-  // Send message strictly to members of this chat
-  if (Array.isArray(chat.members) && chat.members.length > 0) {
-    chat.members.forEach(memberId => {
-      const sockets = userSockets.get(memberId);
-      if (sockets) {
-        sockets.forEach(sId => io.to(sId).emit('new_message', newMessage));
-      }
-    });
-  } else {
-    io.emit('new_message', newMessage);
-  }
+  // Send message strictly to members of this chat (NEVER broadcast to unrelated users)
+  const recipients = Array.isArray(chat.members) && chat.members.length > 0 ? chat.members : [senderId];
+  recipients.forEach(memberId => {
+    const sockets = userSockets.get(memberId);
+    if (sockets) {
+      sockets.forEach(sId => io.to(sId).emit('new_message', newMessage));
+    }
+  });
 
   // If chat is with the AI bot
   if (chat.type === 'bot' || chat.id.startsWith('chat_bot') || chat.targetUserId === 'user_bot') {
@@ -867,23 +864,19 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
         senderId: 'user_bot',
         text: botReply.text,
         inlineKeyboard: botReply.inlineKeyboard || null,
-        members: Array.isArray(chat.members) ? chat.members : [],
+        members: Array.isArray(chat.members) ? chat.members : [senderId],
         timestamp: Date.now(),
         status: 'read',
         reactions: {}
       };
       db.messages.push(botMessage);
       saveData(db);
-      if (Array.isArray(chat.members) && chat.members.length > 0) {
-        chat.members.forEach(memberId => {
-          const sockets = userSockets.get(memberId);
-          if (sockets) {
-            sockets.forEach(sId => io.to(sId).emit('new_message', botMessage));
-          }
-        });
-      } else {
-        io.emit('new_message', botMessage);
-      }
+      recipients.forEach(memberId => {
+        const sockets = userSockets.get(memberId);
+        if (sockets) {
+          sockets.forEach(sId => io.to(sId).emit('new_message', botMessage));
+        }
+      });
     }, 600);
   }
 
@@ -1146,7 +1139,7 @@ app.put('/api/chats/:chatId/archive', (req, res) => {
   res.json(chat);
 });
 
-// Save Chat Draft
+// Save Chat Draft (private to author, do not emit over socket)
 app.put('/api/chats/:chatId/draft', (req, res) => {
   const { chatId } = req.params;
   const { draft } = req.body;
@@ -1154,7 +1147,6 @@ app.put('/api/chats/:chatId/draft', (req, res) => {
   if (!chat) return res.status(404).json({ error: 'Chat not found' });
   chat.draft = draft || null;
   saveData(db);
-  io.emit('chat_updated', chat);
   res.json(chat);
 });
 
@@ -1424,16 +1416,13 @@ io.on('connection', (socket) => {
     db.messages.push(callMsg);
     saveData(db);
 
-    if (Array.isArray(directChat.members)) {
-      directChat.members.forEach(memberId => {
-        const sockets = userSockets.get(memberId);
-        if (sockets) {
-          sockets.forEach(sId => io.to(sId).emit('new_message', callMsg));
-        }
-      });
-    } else {
-      io.emit('new_message', callMsg);
-    }
+    const recipients = Array.isArray(directChat.members) && directChat.members.length > 0 ? directChat.members : [callerId, receiverId];
+    recipients.forEach(memberId => {
+      const sockets = userSockets.get(memberId);
+      if (sockets) {
+        sockets.forEach(sId => io.to(sId).emit('new_message', callMsg));
+      }
+    });
     return callMsg;
   }
 

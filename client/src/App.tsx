@@ -173,7 +173,7 @@ export const App: React.FC = () => {
       const targetChat = currentChats.find((c) => c.id === msg.chatId);
       const isRecipient =
         (Array.isArray(msg.members) && msg.members.includes(myId)) ||
-        (targetChat && (targetChat.members?.includes(myId) || targetChat.type === 'channel' || targetChat.type === 'bot')) ||
+        (targetChat && Array.isArray(targetChat.members) && targetChat.members.includes(myId)) ||
         msg.senderId === myId;
 
       if (!isRecipient) {
@@ -273,10 +273,26 @@ export const App: React.FC = () => {
         description: updatedChat.description,
       };
       setChats((prev) =>
-        prev.map((c) => (c.id === updatedChat.id ? { ...c, ...formatted } : c))
+        prev.map((c) =>
+          c.id === updatedChat.id
+            ? {
+                ...c,
+                ...formatted,
+                lastMessage: updatedChat.lastMessage || c.lastMessage,
+                unreadCount: updatedChat.unreadCount !== undefined ? updatedChat.unreadCount : c.unreadCount,
+              }
+            : c
+        )
       );
       setActiveChat((curr) =>
-        curr && curr.id === updatedChat.id ? { ...curr, ...formatted } : curr
+        curr && curr.id === updatedChat.id
+          ? {
+              ...curr,
+              ...formatted,
+              lastMessage: updatedChat.lastMessage || curr.lastMessage,
+              unreadCount: updatedChat.unreadCount !== undefined ? updatedChat.unreadCount : curr.unreadCount,
+            }
+          : curr
       );
     });
 

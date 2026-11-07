@@ -110,21 +110,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [highlightedChatId, setHighlightedChatId] = useState<string | null>(null);
   const prevLastMsgMap = useRef<{ [chatId: string]: string | undefined }>({});
 
-  // Animate chat list item when a new message is received or sent
+  // Animate chat list item when a new message is received in background chats (NOT the currently active one)
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     chats.forEach((c) => {
       const prevMsgId = prevLastMsgMap.current[c.id];
       const currMsgId = c.lastMessage?.id;
-      if (prevMsgId !== undefined && prevMsgId !== currMsgId) {
+      // Do not blink if this chat is already open/active or if typing a draft
+      if (activeChat?.id !== c.id && prevMsgId !== undefined && currMsgId && prevMsgId !== currMsgId) {
         setHighlightedChatId(c.id);
-        const timer = setTimeout(() => {
+        timer = setTimeout(() => {
           setHighlightedChatId((curr) => (curr === c.id ? null : curr));
         }, 1200);
-        return () => clearTimeout(timer);
       }
       prevLastMsgMap.current[c.id] = currMsgId;
     });
-  }, [chats]);
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [chats, activeChat?.id]);
 
   const customFolders: CustomFolder[] = currentUser.customFolders || [];
 
@@ -405,7 +409,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   e.preventDefault();
                   setChatContextMenu({ x: e.clientX, y: e.clientY, chat });
                 }}
-                className={`flex items-center gap-3 p-2.5 rounded-2xl cursor-pointer transition-all duration-200 my-0.5 relative group ${
+                className={`flex items-center gap-3 p-2.5 rounded-2xl cursor-pointer transition-colors duration-150 my-0.5 relative group ${
                   isActive
                     ? 'bg-[#2b5278] text-white shadow-sm'
                     : 'hover:bg-[var(--tg-surface-hover)] text-[var(--tg-text)]'

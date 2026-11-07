@@ -147,8 +147,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       onLoginSuccess(data);
     } catch (err: unknown) {
       if (err instanceof Error) {
-        const msg = err.message;
-        if (msg.includes('JSON') || msg.includes('doctype') || msg.includes('token') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        const msg = err.message || '';
+        const isTechnical =
+          msg.includes('JSON') ||
+          msg.includes('doctype') ||
+          msg.includes('token') ||
+          msg.includes('<') ||
+          msg.includes('Failed to fetch') ||
+          msg.includes('NetworkError') ||
+          msg.includes('Load failed') ||
+          msg.includes('network');
+        if (isTechnical) {
           setError(`Не удалось связаться с сервером PRITONN (${getApiUrl()}). Проверьте интернет или смените адрес через значок глобуса 🌐`);
         } else {
           setError(msg);
@@ -204,8 +213,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       onLoginSuccess(data);
     } catch (err: unknown) {
       if (err instanceof Error) {
-        const msg = err.message;
-        if (msg.includes('JSON') || msg.includes('doctype') || msg.includes('token') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        const msg = err.message || '';
+        const isTechnical =
+          msg.includes('JSON') ||
+          msg.includes('doctype') ||
+          msg.includes('token') ||
+          msg.includes('<') ||
+          msg.includes('Failed to fetch') ||
+          msg.includes('NetworkError') ||
+          msg.includes('Load failed') ||
+          msg.includes('network');
+        if (isTechnical) {
           setError(`Не удалось связаться с сервером PRITONN (${getApiUrl()}). Проверьте интернет или смените адрес через значок глобуса 🌐`);
         } else {
           setError(msg);

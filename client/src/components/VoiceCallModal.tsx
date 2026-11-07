@@ -18,6 +18,7 @@ import {
   Check,
   X,
   Radio,
+  Wand2,
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { Chat, User } from '../types';
@@ -25,6 +26,7 @@ import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { isUserVerified } from '../utils/verified';
 import { ScreenSharePickerModal, DesktopSource } from './ScreenSharePickerModal';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import { VoiceEffectType, AVAILABLE_VOICE_EFFECTS, applyVoiceEffect } from '../utils/audioEffects';
 
 interface VoiceCallModalProps {
   chat: Chat | null;
@@ -88,6 +90,40 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const [isRecordingCall, setIsRecordingCall] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+
+  // Voice Changer & Background Blur states
+  const [selectedVoiceEffect, setSelectedVoiceEffect] = useState<VoiceEffectType>('normal');
+  const [isVoiceEffectsOpen, setIsVoiceEffectsOpen] = useState(false);
+  const [isBackgroundBlur, setIsBackgroundBlur] = useState(false);
+  const effectAudioCtxRef = useRef<AudioContext | null>(null);
+  const effectCleanupRef = useRef<(() => void) | null>(null);
+
+  const handleSelectVoiceEffect = (effect: VoiceEffectType) => {
+    setSelectedVoiceEffect(effect);
+    setIsVoiceEffectsOpen(false);
+
+    // Apply effect to local audio stream if active
+    if (effectCleanupRef.current) {
+      effectCleanupRef.current();
+      effectCleanupRef.current = null;
+    }
+
+    if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
+      try {
+        if (!effectAudioCtxRef.current || effectAudioCtxRef.current.state === 'closed') {
+          const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          effectAudioCtxRef.current = new AudioContextClass();
+        }
+        const ctx = effectAudioCtxRef.current;
+        const source = ctx.createMediaStreamSource(localStreamRef.current);
+        const destination = ctx.createMediaStreamDestination();
+        const cleanup = applyVoiceEffect(ctx, source, destination, effect);
+        effectCleanupRef.current = cleanup;
+      } catch (err) {
+        console.error('Error applying in-call voice effect:', err);
+      }
+    }
+  };
 
   const toggleCallRecording = () => {
     if (isRecordingCall) {
@@ -1494,11 +1530,14 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                     autoPlay
                     playsInline
                     muted
-                    className="w-full h-full object-cover"
+                    className={`w-full h-full object-cover transition-all ${
+                      isBackgroundBlur ? 'blur-[1.5px] scale-105 contrast-125' : ''
+                    }`}
                   />
                   <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded-full text-[10px] text-white flex items-center gap-1">
                     <Video size={10} className="text-emerald-400" />
                     <span>Вы</span>
+                    {isBackgroundBlur && <span className="text-[9px] text-amber-300">✨ Blur</span>}
                   </div>
                 </div>
               )}
@@ -1713,6 +1752,68 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
           >
             <Radio size={20} className={isRecordingCall ? 'animate-spin' : ''} />
           </button>
+
+          {/* Voice Effects Menu Toggle */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsVoiceEffectsOpen(!isVoiceEffectsOpen)}
+              className={`p-3 rounded-full transition shadow-md cursor-pointer relative ${
+                selectedVoiceEffect !== 'normal'
+                  ? 'bg-purple-600 text-white shadow-purple-600/40 ring-2 ring-purple-400'
+                  : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
+              }`}
+              title="Эффекты изменения голоса (Voice Changer)"
+            >
+              <Wand2 size={20} />
+              {selectedVoiceEffect !== 'normal' && (
+                <span className="absolute -top-1 -right-1 text-xs">✨</span>
+              )}
+            </button>
+
+            {/* Voice Effects Popup Dropdown */}
+            {isVoiceEffectsOpen && (
+              <div className="absolute bottom-14 left-1/2 -translate-x-1/2 w-52 bg-[#17212b]/95 backdrop-blur-md border border-white/10 rounded-2xl p-2 shadow-2xl flex flex-col gap-1 z-50 animate-pop-in text-white text-xs">
+                <div className="px-2 py-1 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                  Изменение голоса
+                </div>
+                {AVAILABLE_VOICE_EFFECTS.map((eff) => (
+                  <button
+                    key={eff.id}
+                    type="button"
+                    onClick={() => handleSelectVoiceEffect(eff.id)}
+                    className={`flex items-center justify-between p-2 rounded-xl transition cursor-pointer ${
+                      selectedVoiceEffect === eff.id
+                        ? 'bg-purple-600/40 border border-purple-400/60 text-white font-semibold'
+                        : 'hover:bg-white/10 text-zinc-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{eff.icon}</span>
+                      <span>{eff.name}</span>
+                    </div>
+                    {selectedVoiceEffect === eff.id && <Check size={14} className="text-purple-400" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Background Blur Toggle (when camera is on) */}
+          {isVideoEnabled && (
+            <button
+              type="button"
+              onClick={() => setIsBackgroundBlur(!isBackgroundBlur)}
+              className={`p-3 rounded-full transition shadow-md cursor-pointer ${
+                isBackgroundBlur
+                  ? 'bg-amber-500 text-white shadow-amber-500/40 ring-2 ring-amber-300'
+                  : 'bg-[#242f3d] hover:bg-[#202b36] text-white'
+              }`}
+              title={isBackgroundBlur ? 'Отключить размытие фона' : 'Размыть фон (Background Blur)'}
+            >
+              <Sparkles size={20} />
+            </button>
+          )}
 
           {isRemoteScreenSharing && !isViewingRemoteScreen && (
             <button

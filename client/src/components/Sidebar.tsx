@@ -27,12 +27,13 @@ import {
   Gamepad2,
   Lock,
 } from 'lucide-react';
-import { Chat, User, Story, CustomFolder } from '../types';
+import { Chat, User, Story, CustomFolder, Message } from '../types';
 import { StoriesBar } from './StoriesBar';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { TelegramPremiumBadge } from './TelegramPremiumBadge';
 import { isUserVerified } from '../utils/verified';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import { API_BASE_URL } from '../config';
 
 interface SidebarProps {
   chats: Chat[];
@@ -114,6 +115,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [chatContextMenu, setChatContextMenu] = useState<{ x: number; y: number; chat: Chat } | null>(null);
   const [highlightedChatId, setHighlightedChatId] = useState<string | null>(null);
   const prevLastMsgMap = useRef<{ [chatId: string]: string | undefined }>({});
+
+  // Global Messages Search State
+  const [matchedMessages, setMatchedMessages] = useState<Message[]>([]);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setMatchedMessages([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      fetch(`${API_BASE_URL}/api/messages/search?q=${encodeURIComponent(q)}&userId=${currentUser.id}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (Array.isArray(data)) setMatchedMessages(data);
+        })
+        .catch(() => {});
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery, currentUser.id]);
 
   // Animate chat list item when a new message is received in background chats (NEVER the currently active one)
   useEffect(() => {
@@ -375,6 +396,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </div>
             ))}
+            <div className="h-px bg-[var(--tg-border)] my-1" />
+          </div>
+        )}
+
+        {/* Global Messages Search Results */}
+        {matchedMessages.length > 0 && (
+          <div className="mb-2">
+            <div className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider px-3 py-1 flex items-center justify-between">
+              <span>Найденные сообщения</span>
+              <span className="text-[10px] text-[var(--tg-text-muted)] font-normal">{matchedMessages.length} шт.</span>
+            </div>
+            {matchedMessages.map((m) => {
+              const parentChat = chats.find((c) => c.id === m.chatId);
+              const sender = allUsers.find((u) => u.id === m.senderId);
+              return (
+                <div
+                  key={m.id}
+                  onClick={() => {
+                    if (parentChat) {
+                      setSearchQuery('');
+                      onSelectChat(parentChat);
+                    }
+                  }}
+                  className="flex flex-col p-2.5 rounded-xl hover:bg-[var(--tg-surface-hover)] cursor-pointer text-xs transition my-0.5"
+                >
+                  <div className="flex items-center justify-between text-[11px] font-semibold mb-0.5">
+                    <span className="truncate max-w-[160px] text-[#5288c1]">
+                      {parentChat?.name || sender?.name || 'Диалог'}
+                    </span>
+                    <span className="text-[10px] text-[var(--tg-text-muted)]">
+                      {new Date(m.timestamp).toLocaleDateString([], { day: 'numeric', month: 'short' })}
+                    </span>
+                  </div>
+                  <p className="truncate text-[var(--tg-text-muted)] text-[11px]">
+                    {m.text}
+                  </p>
+                </div>
+              );
+            })}
             <div className="h-px bg-[var(--tg-border)] my-1" />
           </div>
         )}

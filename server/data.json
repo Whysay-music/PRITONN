@@ -9,11 +9,11 @@
       "avatar": "/uploads/1793986661494-400834245.jpg",
       "bio": "Владелец PRITONN",
       "online": false,
-      "lastSeen": "был(а) только что",
+      "lastSeen": "был(а) сегодня в 04:17",
       "verified": true,
       "blockedUserIds": [],
       "lastSeenTimestamp": 1794014267684,
-      "isPremium": false,
+      "isPremium": true,
       "emojiStatus": "⚡",
       "customFolders": []
     },
@@ -53,7 +53,7 @@
       "bio": "Пользователь PRITONN",
       "verified": false,
       "online": false,
-      "lastSeen": "был(а) 53 мин. назад",
+      "lastSeen": "был(а) сегодня в 01:36",
       "lastSeenTimestamp": 1794004574170
     },
     {
@@ -66,7 +66,7 @@
       "bio": "Пользователь PRITONN",
       "verified": false,
       "online": false,
-      "lastSeen": "был(а) только что",
+      "lastSeen": "был(а) сегодня в 04:45",
       "lastSeenTimestamp": 1794015917665,
       "isPremium": false,
       "emojiStatus": "👑"
@@ -81,7 +81,7 @@
       "bio": "Пользователь PRITONN",
       "verified": false,
       "online": false,
-      "lastSeen": "был(а) только что",
+      "lastSeen": "был(а) сегодня в 04:18",
       "lastSeenTimestamp": 1794014315887
     }
   ],

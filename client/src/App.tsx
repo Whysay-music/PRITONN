@@ -23,8 +23,10 @@ import { CustomFoldersModal } from './components/CustomFoldersModal';
 import { FullscreenEmojiEffect } from './components/FullscreenEmojiEffect';
 import { CallHistoryModal } from './components/CallHistoryModal';
 import { AppLockModal } from './components/AppLockModal';
+import { GlobalMusicPlayer, AudioTrack } from './components/GlobalMusicPlayer';
 import { soundEffects } from './utils/sound';
 import { API_BASE_URL } from './config';
+import { getAvatarUrl } from './utils/avatar';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -50,6 +52,17 @@ export const App: React.FC = () => {
     return hasPin && enabled;
   });
   const [isSettingPin, setIsSettingPin] = useState<boolean>(false);
+
+  // Global Audio / Music Player state
+  const [activeAudioTrack, setActiveAudioTrack] = useState<AudioTrack | null>(null);
+  const [musicPlaylist, setMusicPlaylist] = useState<AudioTrack[]>([]);
+
+  // Request Web Notifications permission
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
 
   // Modals & Drawers
   const [activeStory, setActiveStory] = useState<Story | null>(null);
@@ -238,6 +251,27 @@ export const App: React.FC = () => {
         soundEffects.playSent();
       } else if (!msg.isSilent) {
         soundEffects.playReceive();
+
+        // Background Web Notification and Vibration
+        if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+          const sender = allUsersRef.current.find((u) => u.id === msg.senderId);
+          try {
+            new Notification(sender?.name || 'PRITONN', {
+              body: msg.isVoice
+                ? '🎙 Голосовое сообщение'
+                : msg.mediaUrl
+                ? '📷 Фотография'
+                : msg.text || 'Новое сообщение',
+              icon: getAvatarUrl(sender?.avatar, sender?.name),
+              tag: msg.chatId,
+            });
+          } catch {}
+        }
+        if (document.hidden && 'vibrate' in navigator) {
+          try {
+            navigator.vibrate([200, 100, 200]);
+          } catch {}
+        }
       }
     });
 
@@ -446,15 +480,17 @@ export const App: React.FC = () => {
       );
     });
 
-    socket.on('game_move', ({ messageId, board, winner }: { messageId: string; board: (string | null)[]; winner: string | null }) => {
+    socket.on('game_move', (payload: { messageId: string; board?: (string | null)[]; winner?: string | null; gameData?: any }) => {
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === messageId
+          m.id === payload.messageId
             ? {
                 ...m,
-                gameData: m.gameData
-                  ? { ...m.gameData, board, winner }
-                  : { type: 'tictactoe', board, turn: 'X', winner, playerX: { id: '', name: '' } },
+                gameData: payload.gameData
+                  ? payload.gameData
+                  : m.gameData
+                  ? { ...m.gameData, board: payload.board, winner: payload.winner }
+                  : { type: 'tictactoe', board: payload.board, turn: 'X', winner: payload.winner, playerX: { id: '', name: '' } },
               }
             : m
         )
@@ -1085,6 +1121,14 @@ export const App: React.FC = () => {
         <DesktopTitleBar activeChat={activeChat} currentUser={currentUser} allUsers={allUsers} />
       </div>
 
+      {/* Global Music Player (Header Bar) */}
+      <GlobalMusicPlayer
+        currentTrack={activeAudioTrack}
+        playlist={musicPlaylist}
+        onClose={() => setActiveAudioTrack(null)}
+        onTrackChange={(t) => setActiveAudioTrack(t)}
+      />
+
       {/* Main Workspace: Left Folders Bar + Chat List Sidebar + Main Chat Area + Right Drawer */}
       <div className="flex-1 flex overflow-hidden relative w-full h-full min-w-0">
         <div className="hidden md:flex flex-shrink-0">
@@ -1173,6 +1217,10 @@ export const App: React.FC = () => {
             onSaveDraft={handleSaveDraft}
             onTriggerFullscreenEmoji={(em) => setActiveFullscreenEmoji(em)}
             onTranscribeVoice={handleTranscribeVoice}
+            onPlayGlobalAudio={(track) => {
+              setActiveAudioTrack(track);
+              setMusicPlaylist((prev) => (prev.some((t) => t.id === track.id) ? prev : [...prev, track]));
+            }}
           />
         </div>
 

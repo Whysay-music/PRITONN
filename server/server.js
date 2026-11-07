@@ -1139,6 +1139,25 @@ app.put('/api/chats/:chatId/archive', (req, res) => {
   res.json(chat);
 });
 
+// Global Message Search across user's chats
+app.get('/api/messages/search', (req, res) => {
+  const { q, userId } = req.query;
+  if (!q || !userId) return res.json([]);
+  const query = q.toLowerCase().trim();
+
+  // Strict isolation: only search in chats where user is member
+  const userChatIds = new Set(
+    db.chats.filter(c => Array.isArray(c.members) && c.members.includes(userId)).map(c => c.id)
+  );
+
+  const matched = (db.messages || [])
+    .filter(m => userChatIds.has(m.chatId) && m.text && m.text.toLowerCase().includes(query))
+    .slice(-40)
+    .reverse();
+
+  res.json(matched);
+});
+
 // Save Chat Draft (private to author, do not emit over socket)
 const handleSaveChatDraft = (req, res) => {
   const { chatId } = req.params;
@@ -1660,22 +1679,27 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('user_stop_typing', data);
   });
 
-  socket.on('game_move', ({ messageId, chatId, board, winner }) => {
+  socket.on('game_move', ({ messageId, chatId, board, winner, gameData }) => {
     const msg = (db.messages || []).find(m => m.id === messageId);
     if (msg) {
-      if (!msg.gameData) msg.gameData = { type: 'tictactoe', board, turn: 'X' };
-      msg.gameData.board = board;
-      msg.gameData.winner = winner;
+      if (gameData) {
+        msg.gameData = gameData;
+      } else {
+        if (!msg.gameData) msg.gameData = { type: 'tictactoe', board, turn: 'X' };
+        msg.gameData.board = board;
+        msg.gameData.winner = winner;
+      }
       saveData(db);
     }
+    const payload = { messageId, board, winner, gameData: msg?.gameData || gameData };
     const chat = (db.chats || []).find(c => c.id === chatId);
     if (chat && Array.isArray(chat.members)) {
       chat.members.forEach(mId => {
         const s = userSockets.get(mId);
-        if (s) s.forEach(sId => io.to(sId).emit('game_move', { messageId, board, winner }));
+        if (s) s.forEach(sId => io.to(sId).emit('game_move', payload));
       });
     } else {
-      io.emit('game_move', { messageId, board, winner });
+      io.emit('game_move', payload);
     }
   });
 

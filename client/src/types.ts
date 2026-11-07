@@ -121,13 +121,7 @@ export interface Message {
   stickerUrl?: string;
   isGif?: boolean;
   gifUrl?: string;
-  gameData?: {
-    type: 'tictactoe';
-    board: (string | null)[];
-    turn: string; // userId whose turn it is
-    winner?: string | null; // userId or 'draw' or null
-    playerX: { id: string; name: string };
-    playerO?: { id: string; name: string };
-  };
+  gameData?: any;
+  translatedText?: string;
   scheduledFor?: number;
 }

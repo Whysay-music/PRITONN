@@ -46,6 +46,8 @@ import {
   Bot,
   ArrowLeft,
   Gamepad2,
+  Languages,
+  Wand2,
 } from 'lucide-react';
 import { Chat, Message, User, ReplyInfo, InlineKeyboardButton } from '../types';
 import { VoiceMessagePlayer } from './VoiceMessagePlayer';
@@ -69,6 +71,8 @@ import { ForwardMessageModal } from './ForwardMessageModal';
 import { GroupVoiceChatModal } from './GroupVoiceChatModal';
 import { StickerGifPicker } from './StickerGifPicker';
 import { TicTacToeGame } from './TicTacToeGame';
+import { RockPaperScissorsGame } from './RockPaperScissorsGame';
+import { DiceDuelGame } from './DiceDuelGame';
 import { ChatWallpaperModal } from './ChatWallpaperModal';
 import { ScheduledMessageModal } from './ScheduledMessageModal';
 
@@ -122,6 +126,7 @@ interface ChatAreaProps {
   onSaveDraft?: (chatId: string, text: string) => void;
   onTriggerFullscreenEmoji?: (emoji: string) => void;
   onTranscribeVoice?: (messageId: string) => void;
+  onPlayGlobalAudio?: (track: { id: string; url: string; title: string; artist?: string }) => void;
   onBack?: () => void;
 }
 
@@ -172,6 +177,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onSaveDraft,
   onTriggerFullscreenEmoji,
   onTranscribeVoice,
+  onPlayGlobalAudio,
   onBack,
 }) => {
   const [inputText, setInputText] = useState('');
@@ -179,6 +185,61 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
+
+  // Message Translation State
+  const [translatedMessages, setTranslatedMessages] = useState<Record<string, string>>({});
+  const [translatingIds, setTranslatingIds] = useState<Set<string>>(new Set());
+
+  const handleTranslateMessage = async (msg: Message) => {
+    if (!msg.text) return;
+    if (translatedMessages[msg.id]) {
+      setTranslatedMessages((prev) => {
+        const copy = { ...prev };
+        delete copy[msg.id];
+        return copy;
+      });
+      return;
+    }
+
+    setTranslatingIds((prev) => new Set(prev).add(msg.id));
+    try {
+      const isCyrillic = /[а-яё]/i.test(msg.text);
+      const targetLang = isCyrillic ? 'en' : 'ru';
+      const sourceLang = isCyrillic ? 'ru' : 'en';
+
+      const res = await fetch(
+        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(msg.text)}&langpair=${sourceLang}|${targetLang}`
+      );
+      const data = await res.json();
+      if (data?.responseData?.translatedText) {
+        setTranslatedMessages((prev) => ({
+          ...prev,
+          [msg.id]: data.responseData.translatedText,
+        }));
+      } else {
+        setTranslatedMessages((prev) => ({
+          ...prev,
+          [msg.id]: isCyrillic
+            ? `[EN] ${msg.text}`
+            : `[RU] ${msg.text}`,
+        }));
+      }
+    } catch {
+      const isCyrillic = /[а-яё]/i.test(msg.text);
+      setTranslatedMessages((prev) => ({
+        ...prev,
+        [msg.id]: isCyrillic
+          ? `[EN] ${msg.text}`
+          : `[RU] ${msg.text}`,
+      }));
+    } finally {
+      setTranslatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(msg.id);
+        return next;
+      });
+    }
+  };
 
   // Spoiler send & Burn-on-read timer state
   const [isSpoilerSend, setIsSpoilerSend] = useState(false);
@@ -1292,6 +1353,72 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   />
                 )}
 
+                {/* In-chat Rock-Paper-Scissors Game */}
+                {msg.gameData?.type === 'rps' && (
+                  <RockPaperScissorsGame
+                    gameData={msg.gameData}
+                    currentUser={currentUser}
+                    isOutgoing={isOutgoing}
+                    onMove={(updatedData) => {
+                      if (socket) {
+                        socket.emit('game_move', {
+                          messageId: msg.id,
+                          chatId: chat.id,
+                          gameData: updatedData,
+                        });
+                      }
+                    }}
+                  />
+                )}
+
+                {/* In-chat Dice Duel Game */}
+                {msg.gameData?.type === 'diceduel' && (
+                  <DiceDuelGame
+                    gameData={msg.gameData}
+                    currentUser={currentUser}
+                    isOutgoing={isOutgoing}
+                    onMove={(updatedData) => {
+                      if (socket) {
+                        socket.emit('game_move', {
+                          messageId: msg.id,
+                          chatId: chat.id,
+                          gameData: updatedData,
+                        });
+                      }
+                    }}
+                  />
+                )}
+
+                {/* Audio File with Global Music Player button */}
+                {msg.mediaUrl && (msg.mediaType === 'audio' || msg.mediaUrl.match(/\.(mp3|wav|ogg|m4a|aac)$/i)) && (
+                  <div className="my-1.5 p-2 rounded-xl bg-black/20 border border-white/10 flex items-center justify-between gap-3 select-none">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-[#5288c1]/20 text-[#5288c1] flex items-center justify-center flex-shrink-0">
+                        <Music size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold truncate text-white">{msg.fileName || 'Музыкальный трек'}</p>
+                        <p className="text-[10px] text-zinc-400">PRITONN Music</p>
+                      </div>
+                    </div>
+                    {onPlayGlobalAudio && (
+                      <button
+                        type="button"
+                        onClick={() => onPlayGlobalAudio({
+                          id: msg.id,
+                          url: msg.mediaUrl!,
+                          title: msg.fileName || 'Музыкальный трек',
+                          artist: isOutgoing ? currentUser.name : (allUsers.find(u => u.id === msg.senderId)?.name || 'Аудио')
+                        })}
+                        className="px-2.5 py-1 rounded-lg bg-[#5288c1] hover:bg-blue-600 text-white text-xs font-bold transition shadow cursor-pointer active:scale-95 flex items-center gap-1"
+                      >
+                        <Play size={12} fill="currentColor" />
+                        <span>Слушать</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {/* Voice Message, Dice, or Text */}
                 {msg.isVoice ? (
                   <VoiceMessagePlayer
@@ -1321,6 +1448,15 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     ) : (
                       <div className="text-sm whitespace-pre-wrap break-words leading-relaxed select-text font-normal">
                         <TelegramSpoilerText text={msg.text} />
+                        {translatedMessages[msg.id] && (
+                          <div className="mt-2 pt-1.5 border-t border-white/10 text-xs italic opacity-95 flex items-start gap-1.5 animate-pop-in select-text">
+                            <Languages size={13} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                            <div>
+                              <span className="text-[10px] text-amber-300 font-bold block not-italic">Перевод:</span>
+                              <span className="text-white/95">{translatedMessages[msg.id]}</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )
                   )
@@ -1330,6 +1466,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 <div className={`flex items-center justify-end gap-1.5 text-[10px] mt-1 select-none ${
                   isOutgoing ? 'text-[var(--tg-bubble-out-meta)]' : 'text-[var(--tg-bubble-in-meta)]'
                 }`}>
+                  {msg.text && (
+                    <button
+                      type="button"
+                      onClick={() => handleTranslateMessage(msg)}
+                      className="hover:text-amber-300 transition p-0.5 cursor-pointer opacity-70 hover:opacity-100 flex items-center gap-0.5"
+                      title={translatedMessages[msg.id] ? "Скрыть перевод" : "Перевести сообщение (AI Translation)"}
+                    >
+                      <Languages size={11} className={translatingIds.has(msg.id) ? "animate-spin text-amber-300" : ""} />
+                    </button>
+                  )}
                   {msg.burnTimer && (
                     <TelegramBurnTimer
                       burnSeconds={msg.burnTimer}
@@ -1685,7 +1831,57 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   </div>
                   <div>
                     <div className="font-semibold text-[var(--tg-text)]">Крестики-нолики</div>
-                    <div className="text-[10px] text-[var(--tg-text-muted)]">Мини-игра в чате</div>
+                    <div className="text-[10px] text-[var(--tg-text-muted)]">Мини-игра 3x3</div>
+                  </div>
+                </button>
+
+                {/* Rock-Paper-Scissors button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAttachMenuOpen(false);
+                    onSendMessage({
+                      text: '🪨✂️📄 Камень, Ножницы, Бумага! Сделайте выбор:',
+                      gameData: {
+                        type: 'rps',
+                        player1: { id: currentUser.id, name: currentUser.name },
+                        status: 'waiting',
+                      },
+                    });
+                  }}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[var(--tg-surface-hover)] text-xs font-medium transition text-left cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0 text-base">
+                    ✂️
+                  </div>
+                  <div>
+                    <div className="font-semibold text-[var(--tg-text)]">Камень, Ножницы, Бумага</div>
+                    <div className="text-[10px] text-[var(--tg-text-muted)]">Интерактивная дуэль</div>
+                  </div>
+                </button>
+
+                {/* Dice Duel button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAttachMenuOpen(false);
+                    onSendMessage({
+                      text: '🎲 Бросаю вызов на кубиках (2d6)!',
+                      gameData: {
+                        type: 'diceduel',
+                        player1: { id: currentUser.id, name: currentUser.name },
+                        status: 'waiting',
+                      },
+                    });
+                  }}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[var(--tg-surface-hover)] text-xs font-medium transition text-left cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center flex-shrink-0 text-base">
+                    🎲
+                  </div>
+                  <div>
+                    <div className="font-semibold text-[var(--tg-text)]">Дуэль на кубиках</div>
+                    <div className="text-[10px] text-[var(--tg-text-muted)]">Бросок на 2 кубика</div>
                   </div>
                 </button>
               </div>

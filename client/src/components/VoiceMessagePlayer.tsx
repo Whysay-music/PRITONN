@@ -148,12 +148,12 @@ export const VoiceMessagePlayer: React.FC<VoiceMessagePlayerProps> = ({
               <button
                 type="button"
                 onClick={cycleSpeed}
-                className={`px-1 py-0.2 rounded text-[10px] font-bold border transition cursor-pointer ${
+                className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
                   speed > 1
                     ? isOutgoing
                       ? 'bg-white/20 border-white text-white'
                       : 'bg-blue-500/20 border-blue-400 text-blue-400'
-                    : 'border-transparent opacity-60 hover:opacity-100'
+                    : 'border-white/10 opacity-70 hover:opacity-100'
                 }`}
                 title="Скорость воспроизведения"
               >

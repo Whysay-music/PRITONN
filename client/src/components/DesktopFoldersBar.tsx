@@ -97,49 +97,51 @@ export const DesktopFoldersBar: React.FC<DesktopFoldersBarProps> = ({
   ];
 
   return (
-    <div className="w-[58px] h-full bg-[#0e1621] border-r border-[#101921] flex flex-col items-center py-2 select-none flex-shrink-0 z-40">
+    <div className="w-[62px] h-full bg-[var(--tg-sidebar)]/90 backdrop-blur-xl border-r border-[var(--tg-card-border)] flex flex-col items-center py-2.5 select-none flex-shrink-0 z-40">
       {/* Telegram Hamburger button at top of folders bar */}
       <button
         type="button"
         onClick={onOpenMenu}
-        className="relative w-10 h-10 rounded-xl flex flex-col items-center justify-center gap-[3.5px] text-[#7f91a4] hover:text-[#f5f5f5] hover:bg-[#17212b] active:scale-95 transition mb-2 cursor-pointer"
+        className="relative w-11 h-11 rounded-2xl flex flex-col items-center justify-center gap-[4px] text-[var(--tg-text-muted)] hover:text-[var(--tg-text)] hover:bg-[var(--tg-surface-hover)] border border-transparent hover:border-[var(--tg-card-border)] active:scale-95 transition mb-2.5 cursor-pointer"
         title={hasUpdateAvailable ? 'Главное меню (Доступно обновление в Настройках!)' : 'Главное меню'}
       >
-        <span className="w-[18px] h-[2px] bg-current rounded-full" />
-        <span className="w-[18px] h-[2px] bg-current rounded-full" />
-        <span className="w-[18px] h-[2px] bg-current rounded-full" />
+        <span className="w-[20px] h-[2px] bg-current rounded-full" />
+        <span className="w-[20px] h-[2px] bg-current rounded-full" />
+        <span className="w-[20px] h-[2px] bg-current rounded-full" />
         {hasUpdateAvailable && (
-          <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-[#0e1621] animate-pulse" />
+          <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-[var(--tg-sidebar)] animate-pulse" />
         )}
       </button>
 
       {/* Standard Folder items */}
-      <div className="flex-1 w-full flex flex-col items-center gap-1 overflow-y-auto no-scrollbar">
+      <div className="flex-1 w-full flex flex-col items-center gap-1.5 overflow-y-auto no-scrollbar px-1">
         {standardFolders.map((f) => {
           const isActive = activeTab === f.id;
           return (
             <button
               key={f.id}
               onClick={() => onSelectTab(f.id)}
-              className={`relative w-11 h-11 rounded-xl flex flex-col items-center justify-center transition group cursor-pointer ${
+              className={`relative w-12 h-12 rounded-2xl flex flex-col items-center justify-center transition-all duration-200 group cursor-pointer ${
                 isActive
-                  ? 'bg-[#2b5278] text-[#5288c1]'
-                  : 'text-[#7f91a4] hover:bg-[#17212b] hover:text-[#f5f5f5]'
+                  ? 'bg-gradient-to-br from-[var(--tg-accent)]/30 to-[var(--tg-accent)]/10 text-white border border-[var(--tg-border-accent)]/60 shadow-sm'
+                  : 'text-[var(--tg-text-muted)] hover:bg-[var(--tg-surface-hover)] hover:text-[var(--tg-text)] border border-transparent hover:border-[var(--tg-card-border)]'
               }`}
               title={`${f.label} чаты`}
             >
               {/* Active left indicator pill */}
               {isActive && (
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-[#5288c1] rounded-r-full" />
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-6 bg-[var(--tg-accent)] rounded-r-full shadow-sm" />
               )}
-              <div className={`${isActive ? 'text-white' : ''}`}>{f.icon}</div>
-              <span className="text-[9px] font-medium leading-none mt-1 truncate max-w-[44px]">
+              <div className={`${isActive ? 'text-[var(--tg-accent)] scale-105' : 'group-hover:scale-105'} transition-transform`}>
+                {f.icon}
+              </div>
+              <span className={`text-[9px] font-medium leading-none mt-1 truncate max-w-[46px] ${isActive ? 'text-[var(--tg-text)] font-semibold' : ''}`}>
                 {f.label}
               </span>
 
               {/* Unread badge */}
               {f.unread > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] px-1 bg-[#5288c1] text-white rounded-full text-[9px] font-bold flex items-center justify-center border border-[#0e1621]">
+                <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 bg-[var(--tg-accent)] text-white rounded-full text-[9px] font-bold flex items-center justify-center border border-[var(--tg-sidebar)] shadow">
                   {f.unread}
                 </span>
               )}
@@ -154,18 +156,18 @@ export const DesktopFoldersBar: React.FC<DesktopFoldersBarProps> = ({
             <button
               key={f.id}
               onClick={() => onSelectTab(f.id)}
-              className={`relative w-11 h-11 rounded-xl flex flex-col items-center justify-center transition group cursor-pointer ${
+              className={`relative w-12 h-12 rounded-2xl flex flex-col items-center justify-center transition-all duration-200 group cursor-pointer ${
                 isActive
-                  ? 'bg-[#2b5278] text-[#5288c1]'
-                  : 'text-[#7f91a4] hover:bg-[#17212b] hover:text-[#f5f5f5]'
+                  ? 'bg-gradient-to-br from-[var(--tg-accent)]/30 to-[var(--tg-accent)]/10 text-white border border-[var(--tg-border-accent)]/60 shadow-sm'
+                  : 'text-[var(--tg-text-muted)] hover:bg-[var(--tg-surface-hover)] hover:text-[var(--tg-text)] border border-transparent hover:border-[var(--tg-card-border)]'
               }`}
               title={`Папка: ${f.name}`}
             >
               {isActive && (
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-[#5288c1] rounded-r-full" />
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1.5 h-6 bg-[var(--tg-accent)] rounded-r-full shadow-sm" />
               )}
-              <span className="text-base leading-none">{f.icon}</span>
-              <span className="text-[8px] font-medium leading-none mt-1 truncate max-w-[44px]">
+              <span className="text-base leading-none group-hover:scale-110 transition-transform">{f.icon}</span>
+              <span className="text-[8px] font-medium leading-none mt-1 truncate max-w-[46px]">
                 {f.name}
               </span>
             </button>
@@ -177,7 +179,7 @@ export const DesktopFoldersBar: React.FC<DesktopFoldersBarProps> = ({
           <button
             type="button"
             onClick={onOpenMiniApp}
-            className="w-11 h-11 rounded-xl flex flex-col items-center justify-center text-amber-400 hover:bg-[#17212b] hover:scale-105 transition mt-1 cursor-pointer"
+            className="w-12 h-12 rounded-2xl flex flex-col items-center justify-center text-amber-400 hover:bg-[var(--tg-surface-hover)] hover:scale-105 border border-transparent hover:border-amber-500/30 transition-all mt-1 cursor-pointer"
             title="PRITONN Mini Apps"
           >
             <Gamepad2 size={18} />
@@ -187,12 +189,12 @@ export const DesktopFoldersBar: React.FC<DesktopFoldersBarProps> = ({
       </div>
 
       {/* Bottom Actions: Saved Messages, Custom Folders, Settings */}
-      <div className="w-full flex flex-col items-center gap-1 pt-2 border-t border-[#17212b]/60">
+      <div className="w-full flex flex-col items-center gap-1.5 pt-2.5 border-t border-[var(--tg-card-border)] px-1">
         {onOpenCustomFolders && (
           <button
             type="button"
             onClick={onOpenCustomFolders}
-            className="w-10 h-10 rounded-xl flex items-center justify-center text-[#7f91a4] hover:text-[#5288c1] hover:bg-[#17212b] transition cursor-pointer"
+            className="w-11 h-11 rounded-2xl flex items-center justify-center text-[var(--tg-text-muted)] hover:text-[var(--tg-accent)] hover:bg-[var(--tg-surface-hover)] border border-transparent hover:border-[var(--tg-card-border)] transition cursor-pointer"
             title="Настроить папки чатов"
           >
             <FolderPlus size={18} />
@@ -202,7 +204,7 @@ export const DesktopFoldersBar: React.FC<DesktopFoldersBarProps> = ({
         <button
           type="button"
           onClick={onOpenSavedMessages}
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-[#7f91a4] hover:text-[#5288c1] hover:bg-[#17212b] transition cursor-pointer"
+          className="w-11 h-11 rounded-2xl flex items-center justify-center text-[var(--tg-text-muted)] hover:text-[var(--tg-accent)] hover:bg-[var(--tg-surface-hover)] border border-transparent hover:border-[var(--tg-card-border)] transition cursor-pointer"
           title="Избранное"
         >
           <Bookmark size={18} />
@@ -211,12 +213,12 @@ export const DesktopFoldersBar: React.FC<DesktopFoldersBarProps> = ({
         <button
           type="button"
           onClick={onOpenSettings}
-          className="relative w-10 h-10 rounded-xl flex items-center justify-center text-[#7f91a4] hover:text-[#f5f5f5] hover:bg-[#17212b] transition cursor-pointer"
+          className="relative w-11 h-11 rounded-2xl flex items-center justify-center text-[var(--tg-text-muted)] hover:text-[var(--tg-text)] hover:bg-[var(--tg-surface-hover)] border border-transparent hover:border-[var(--tg-card-border)] transition cursor-pointer"
           title={hasUpdateAvailable ? 'Настройки PRITONN — доступно обновление!' : 'Настройки PRITONN'}
         >
           <Settings size={18} />
           {hasUpdateAvailable && (
-            <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-[#0e1621] animate-pulse" />
+            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-[var(--tg-sidebar)] animate-pulse" />
           )}
         </button>
       </div>

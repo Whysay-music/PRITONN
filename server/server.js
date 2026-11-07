@@ -1265,15 +1265,26 @@ app.get('/api/chats/:chatId/messages', (req, res) => {
 
   // Mark unread as read
   let hasUpdated = false;
+  const now = Date.now();
+  const readerUser = db.users.find(u => u.id === currentUserId);
+  const readerName = readerUser ? readerUser.name : 'Собеседник';
+  const readMsgIds = [];
+
   db.messages.forEach(m => {
     if (m.chatId === chatId && m.senderId !== currentUserId && m.status !== 'read') {
       m.status = 'read';
+      m.readAt = m.readAt || now;
+      m.readBy = m.readBy || [];
+      if (!m.readBy.some(r => r.userId === currentUserId)) {
+        m.readBy.push({ userId: currentUserId, userName: readerName, timestamp: now });
+      }
+      readMsgIds.push(m.id);
       hasUpdated = true;
     }
   });
   if (hasUpdated) {
     saveData(db);
-    io.emit('messages_read', { chatId, readerId: currentUserId });
+    io.emit('messages_read', { chatId, readerId: currentUserId, readerName, readAt: now, messageIds: readMsgIds });
   }
 
   const chatMsgs = db.messages.filter(m => 
@@ -2065,14 +2076,14 @@ app.post('/api/messages/:id/transcribe', async (req, res) => {
 
 // App Version & In-App Updater Metadata Endpoint
 app.get('/api/app-version', (req, res) => {
-  let pkgVersion = '5.14.0';
+  let pkgVersion = '5.15.0';
   try {
     const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
     if (rootPkg && rootPkg.version) pkgVersion = rootPkg.version;
   } catch {}
   res.json({
     version: pkgVersion,
-    releaseNotes: 'PRITONN v' + pkgVersion + ' — Стабильные звонки и демонстрация экрана без вылетов, виджет звонка во всех разделах, кнопки Принять/Сбросить в уведомлениях, запись войсов и кружков удержанием и обновлённый дизайн.',
+    releaseNotes: 'PRITONN v' + pkgVersion + ' — Стильный дизайн бокового меню с рамками кнопок, перетаскивание чатов (Drag & Drop) и архив, темы оформления (градиенты, рамки и цвета окон), просмотр времени прочтения сообщений в контекстном меню.',
     apkUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_v${pkgVersion}.apk`,
     winSetupUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_Setup_${pkgVersion}.exe`,
     releasePageUrl: 'https://github.com/Whysay-music/PRITONN/releases/latest',
@@ -2204,6 +2215,32 @@ io.on('connection', (socket) => {
   socket.on('user_online', ({ userId } = {}) => {
     if (!userId) return;
     registerUserSocket(socket, userId);
+  });
+
+  socket.on('mark_read', ({ chatId, userId }) => {
+    if (!chatId || !userId) return;
+    let hasUpdated = false;
+    const now = Date.now();
+    const readerUser = db.users.find(u => u.id === userId);
+    const readerName = readerUser ? readerUser.name : 'Собеседник';
+    const readMsgIds = [];
+
+    db.messages.forEach(m => {
+      if (m.chatId === chatId && m.senderId !== userId && m.status !== 'read') {
+        m.status = 'read';
+        m.readAt = m.readAt || now;
+        m.readBy = m.readBy || [];
+        if (!m.readBy.some(r => r.userId === userId)) {
+          m.readBy.push({ userId, userName: readerName, timestamp: now });
+        }
+        readMsgIds.push(m.id);
+        hasUpdated = true;
+      }
+    });
+    if (hasUpdated) {
+      saveData(db);
+      io.emit('messages_read', { chatId, readerId: userId, readerName, readAt: now, messageIds: readMsgIds });
+    }
   });
 
   socket.on('user_offline', ({ userId }) => {

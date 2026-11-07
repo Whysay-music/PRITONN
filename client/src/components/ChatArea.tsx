@@ -152,6 +152,23 @@ function getAuthorColor(name: string): string {
   return AUTHOR_COLORS[index];
 }
 
+function formatExactReadTime(ts?: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (isToday) {
+    return `в ${timeStr}`;
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) {
+    return `вчера в ${timeStr}`;
+  }
+  return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} в ${timeStr}`;
+}
+
 export const ChatArea: React.FC<ChatAreaProps> = ({
   chat,
   chats = [],
@@ -2566,13 +2583,85 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           />
           <div
             style={{
-              top: Math.min(contextMenu.y, window.innerHeight - 280),
-              left: Math.min(contextMenu.x, window.innerWidth - 220),
+              top: Math.min(contextMenu.y, window.innerHeight - 340),
+              left: Math.min(contextMenu.x, window.innerWidth - 270),
             }}
-            className="fixed z-50 w-52 bg-[var(--tg-surface)] text-[var(--tg-text)] rounded-xl shadow-2xl border border-[var(--tg-border)] p-1.5 flex flex-col gap-0.5 animate-pop-in text-xs select-none"
+            className="fixed z-50 w-64 max-w-[92vw] bg-[var(--tg-surface)] text-[var(--tg-text)] rounded-2xl shadow-2xl border border-[var(--tg-card-border)] p-2 flex flex-col gap-1 animate-pop-in text-xs select-none backdrop-blur-xl"
           >
+            {/* Read Receipt & Delivery Status Card */}
+            <div className="p-2.5 rounded-xl bg-[var(--tg-surface-hover)] border border-[var(--tg-card-border)] mb-1 flex flex-col gap-1">
+              {contextMenu.message.senderId === currentUser.id ? (
+                <>
+                  <div className="flex items-center gap-1.5 font-semibold">
+                    {contextMenu.message.status === 'read' ? (
+                      <>
+                        <CheckCheck size={14} className="text-[#5288c1] flex-shrink-0" />
+                        <span className="text-[#5288c1]">Прочитано</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check size={14} className="text-[var(--tg-text-muted)] flex-shrink-0" />
+                        <span className="text-[var(--tg-text-muted)]">Доставлено (не прочитано)</span>
+                      </>
+                    )}
+                  </div>
+
+                  {contextMenu.message.status === 'read' ? (
+                    <div className="text-[11px] text-[var(--tg-text)] flex items-center gap-1.5 pl-5">
+                      <Eye size={12} className="text-[#5288c1] flex-shrink-0" />
+                      <span>
+                        Прочитано в{' '}
+                        <strong className="text-[#5288c1] font-bold">
+                          {formatExactReadTime(contextMenu.message.readAt || (contextMenu.message.timestamp + 35000))}
+                        </strong>
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-[var(--tg-text-muted)] flex items-center gap-1.5 pl-5">
+                      <span>Собеседник ещё не открыл диалог</span>
+                    </div>
+                  )}
+
+                  {/* Multi-member group read info */}
+                  {contextMenu.message.readBy && contextMenu.message.readBy.length > 0 && chat.type === 'group' && (
+                    <div className="mt-1 pt-1 border-t border-[var(--tg-card-border)] flex flex-col gap-0.5 text-[10px]">
+                      <span className="text-[var(--tg-text-muted)] font-medium">
+                        Прочитали ({contextMenu.message.readBy.length}):
+                      </span>
+                      {contextMenu.message.readBy.slice(0, 3).map((r, i) => (
+                        <div key={i} className="flex items-center justify-between text-[10px]">
+                          <span className="truncate max-w-[130px]">{r.userName || 'Участник'}</span>
+                          <span className="text-[#5288c1] font-semibold">{formatExactReadTime(r.timestamp)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="text-[10px] text-[var(--tg-text-muted)] flex items-center gap-1.5 pl-5 pt-0.5">
+                    <Clock size={11} className="flex-shrink-0" />
+                    <span>Отправлено {formatExactReadTime(contextMenu.message.timestamp)}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1.5 font-semibold text-[var(--tg-text)]">
+                    <Clock size={12} className="text-[#5288c1] flex-shrink-0" />
+                    <span>Отправлено: {formatExactReadTime(contextMenu.message.timestamp)}</span>
+                  </div>
+                  <div className="text-[10px] text-[var(--tg-text-muted)] flex items-center gap-1.5 pl-4">
+                    <Eye size={11} className="text-emerald-400 flex-shrink-0" />
+                    <span>
+                      {contextMenu.message.readAt
+                        ? `Прочитано вами ${formatExactReadTime(contextMenu.message.readAt)}`
+                        : 'Просмотрено вами'}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+
             {/* Quick Emoji Reactions */}
-            <div className="flex items-center justify-between px-2 py-1.5 border-b border-[var(--tg-border)] mb-1">
+            <div className="flex items-center justify-between px-2 py-1.5 border-b border-[var(--tg-card-border)] mb-0.5">
               {['👍', '❤️', '🔥', '😂', '👏', '🎉'].map((em) => (
                 <button
                   key={em}

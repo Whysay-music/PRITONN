@@ -38,6 +38,7 @@ import {
   onSystemCallAction,
 } from './utils/notifications';
 import { AppUpdateInfo, checkForAppUpdate, installAppUpdate } from './utils/updater';
+import { applyThemeToDocument, getSavedThemeId, AppTheme } from './utils/theme';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -194,20 +195,30 @@ export const App: React.FC = () => {
   const chatsRef = useRef<Chat[]>(chats);
   chatsRef.current = chats;
 
-  // Apply dark or light theme & update mobile status bar color
+  // Apply theme & listen for theme changes
   useEffect(() => {
-    localStorage.setItem('pritonn_is_dark', String(isDark));
-    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    const savedId = getSavedThemeId();
+    const applied = applyThemeToDocument(savedId);
+    setIsDark(applied.isDark);
+
+    const onThemeChange = (e: Event) => {
+      const custom = e as CustomEvent<AppTheme>;
+      if (custom.detail) {
+        setIsDark(custom.detail.isDark);
+      }
+    };
+    window.addEventListener('pritonn-theme-changed', onThemeChange);
+    return () => window.removeEventListener('pritonn-theme-changed', onThemeChange);
+  }, []);
+
+  const handleToggleTheme = () => {
     if (isDark) {
-      document.documentElement.classList.remove('light-theme');
-      document.body.classList.remove('light-theme');
-      if (metaTheme) metaTheme.setAttribute('content', '#0e1621');
+      applyThemeToDocument('snow-glass');
     } else {
-      document.documentElement.classList.add('light-theme');
-      document.body.classList.add('light-theme');
-      if (metaTheme) metaTheme.setAttribute('content', '#eef1f5');
+      const prev = localStorage.getItem('pritonn_last_dark_theme') || 'neon-blue';
+      applyThemeToDocument(prev === 'snow-glass' ? 'neon-blue' : prev);
     }
-  }, [isDark]);
+  };
 
   // Android Hardware Back Button navigation support (prevents app crashes & accidental exits)
   useEffect(() => {
@@ -401,16 +412,64 @@ export const App: React.FC = () => {
       }
     });
 
-    socket.on('messages_read', ({ chatId }: { chatId: string }) => {
-      setActiveChat((curr) => {
-        if (curr && curr.id === chatId) {
-          setMessages((prev) =>
-            prev.map((m) => (m.status !== 'read' ? { ...m, status: 'read' } : m))
-          );
-        }
-        return curr;
-      });
-    });
+    socket.on(
+      'messages_read',
+      ({
+        chatId,
+        readerId,
+        readerName,
+        readAt,
+      }: {
+        chatId: string;
+        readerId?: string;
+        readerName?: string;
+        readAt?: number;
+      }) => {
+        setActiveChat((curr) => {
+          if (curr && curr.id === chatId) {
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.chatId === chatId && (m.status !== 'read' || !m.readAt)) {
+                  const updatedReadBy = [...(m.readBy || [])];
+                  if (readerId && !updatedReadBy.some((r) => r.userId === readerId)) {
+                    updatedReadBy.push({
+                      userId: readerId,
+                      userName: readerName || 'Собеседник',
+                      timestamp: readAt || Date.now(),
+                    });
+                  }
+                  return {
+                    ...m,
+                    status: 'read',
+                    readAt: m.readAt || readAt || Date.now(),
+                    readBy: updatedReadBy,
+                  };
+                }
+                return m;
+              })
+            );
+          }
+          return curr;
+        });
+
+        setChats((prev) =>
+          prev.map((c) => {
+            if (c.id === chatId && c.lastMessage && c.lastMessage.status !== 'read') {
+              return {
+                ...c,
+                lastMessage: {
+                  ...c.lastMessage,
+                  status: 'read',
+                  readAt: c.lastMessage.readAt || readAt || Date.now(),
+                },
+                unreadCount: 0,
+              };
+            }
+            return c;
+          })
+        );
+      }
+    );
 
     socket.on('message_updated', (updated: Message) => {
       setMessages((prev) =>
@@ -1522,7 +1581,7 @@ export const App: React.FC = () => {
             onOpenMiniApp={() => setIsMiniAppOpen(true)}
             onTogglePinChat={handleTogglePinChat}
             onToggleArchiveChat={handleToggleArchiveChat}
-            onToggleTheme={() => setIsDark(!isDark)}
+            onToggleTheme={handleToggleTheme}
             onLogout={handleLogout}
             onSelectStory={(s) => setActiveStory(s)}
             onCreateStory={() => setIsCreateStoryOpen(true)}
@@ -1675,7 +1734,7 @@ export const App: React.FC = () => {
         isOpen={isSettingsOpen}
         currentUser={currentUser}
         isDark={isDark}
-        onToggleTheme={() => setIsDark(!isDark)}
+        onToggleTheme={handleToggleTheme}
         onUpdateProfile={handleUpdateProfile}
         onOpenCustomFolders={() => setIsFoldersModalOpen(true)}
         onOpenAppLockSetup={() => setIsSettingPin(true)}
@@ -1852,7 +1911,7 @@ export const App: React.FC = () => {
         onOpenSavedMessages={handleOpenSavedMessages}
         onOpenCustomFolders={() => setIsFoldersModalOpen(true)}
         onOpenMiniApp={() => setIsMiniAppOpen(true)}
-        onToggleTheme={() => setIsDark(!isDark)}
+        onToggleTheme={handleToggleTheme}
         onLogout={handleLogout}
       />
 

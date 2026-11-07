@@ -20,11 +20,13 @@ import {
   RefreshCw,
   Download,
   BatteryCharging,
+  Palette,
 } from 'lucide-react';
 import { User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { API_BASE_URL, APP_VERSION } from '../config';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import { APP_THEMES, getSavedThemeId, applyThemeToDocument } from '../utils/theme';
 import {
   areNotificationsEnabled,
   setNotificationsEnabled,
@@ -84,6 +86,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [wallpaper, setWallpaper] = useState(() => localStorage.getItem('tg_wallpaper') || 'doodle');
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('tg_accent') || '#2481cc');
+  const [activeThemeId, setActiveThemeId] = useState<string>(getSavedThemeId);
 
   // Notifications, Sounds, Background Mode & In-App Updater state
   const [notificationsOn, setNotificationsOn] = useState<boolean>(() => areNotificationsEnabled());
@@ -381,19 +384,71 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* Theme switch */}
-          <div className="flex items-center justify-between bg-[var(--tg-sidebar)] p-3 rounded-xl border border-[var(--tg-border)]">
-            <div className="flex items-center gap-2 text-xs font-medium">
-              {isDark ? <Moon size={16} className="text-blue-400" /> : <Sun size={16} className="text-amber-500" />}
-              <span>Тема оформления: {isDark ? 'Тёмная' : 'Светлая'}</span>
+          {/* Themes & Window Styles Engine */}
+          <div className="bg-[var(--tg-sidebar)] p-3.5 rounded-2xl border border-[var(--tg-card-border)] flex flex-col gap-3 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Palette size={16} className="text-[#3390ec]" />
+                <div className="text-xs font-bold text-[var(--tg-text)]">
+                  Темы оформления и стили окон
+                </div>
+              </div>
+              <span className="text-[10px] text-[var(--tg-accent)] font-semibold">
+                {APP_THEMES.find((t) => t.id === activeThemeId)?.name}
+              </span>
             </div>
-            <button
-              type="button"
-              onClick={onToggleTheme}
-              className="px-3 py-1 text-xs font-semibold rounded-lg bg-[var(--tg-surface)] hover:bg-[var(--tg-surface-hover)] border border-[var(--tg-border)] transition cursor-pointer"
-            >
-              Переключить
-            </button>
+
+            <div className="text-[11px] text-[var(--tg-text-muted)] -mt-1 leading-relaxed">
+              Каждая тема меняет цветовую палитру окон, неоновые обводки, градиенты и оформление карточек.
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {APP_THEMES.map((th) => {
+                const isSelected = activeThemeId === th.id;
+                return (
+                  <button
+                    key={th.id}
+                    type="button"
+                    onClick={() => {
+                      applyThemeToDocument(th.id);
+                      setActiveThemeId(th.id);
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition-all duration-200 cursor-pointer flex items-center justify-between group relative overflow-hidden ${
+                      isSelected
+                        ? 'border-[var(--tg-border-accent)] bg-[var(--tg-surface-hover)] shadow-md ring-1 ring-[var(--tg-border-accent)]'
+                        : 'border-[var(--tg-card-border)] bg-[var(--tg-surface)]/60 hover:bg-[var(--tg-surface-hover)] hover:border-[var(--tg-border-accent)]/50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {/* Color preview circle with outer glowing ring */}
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 shadow border border-white/20"
+                        style={{ background: th.colors.gradientMain }}
+                      >
+                        {isSelected && <Check size={14} className="text-white drop-shadow" />}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-[var(--tg-text)] leading-tight truncate">
+                          {th.name}
+                        </div>
+                        <div className="text-[9.5px] text-[var(--tg-text-muted)] flex items-center gap-1.5 mt-0.5">
+                          <span
+                            className="w-2 h-2 rounded-full inline-block"
+                            style={{ backgroundColor: th.colors.accent }}
+                          />
+                          <span>{th.isDark ? 'Тёмная' : 'Светлая'} • Градиент</span>
+                        </div>
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <span className="text-[9.5px] font-bold text-[#5288c1] bg-[#5288c1]/15 px-2 py-0.5 rounded-full border border-[#5288c1]/30">
+                        Активна
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Chat Appearance: Wallpapers & Accent Colors */}

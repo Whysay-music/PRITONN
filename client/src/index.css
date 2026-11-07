@@ -23,24 +23,30 @@
   --tg-titlebar-border: #0b1117;
   --tg-titlebar-text: #e1e3e6;
   --tg-titlebar-muted: #7f91a4;
+  --tg-border-accent: #5288c1;
+  --tg-card-border: rgba(82, 136, 193, 0.25);
+  --tg-glow-color: rgba(36, 129, 204, 0.35);
+  --tg-gradient-main: linear-gradient(135deg, #2481cc 0%, #175d97 100%);
+  --tg-gradient-header: linear-gradient(135deg, #1f2b38 0%, #16222f 100%);
+  --tg-window-border: #1c2936;
 }
 
 .light-theme {
-  --tg-bg: #eef1f5;
+  --tg-bg: #f1f5f9;
   --tg-sidebar: #ffffff;
-  --tg-surface: #ffffff;
-  --tg-surface-hover: #f1f5f9;
-  --tg-accent: #3390ec;
-  --tg-accent-hover: #267ecc;
+  --tg-surface: #f8fafc;
+  --tg-surface-hover: #e2e8f0;
+  --tg-accent: #2563eb;
+  --tg-accent-hover: #1d4ed8;
   --tg-bubble-in: #ffffff;
-  --tg-bubble-out: #e3f2fd;
+  --tg-bubble-out: #dbeafe;
   --tg-bubble-in-text: #0f172a;
-  --tg-bubble-out-text: #0f172a;
+  --tg-bubble-out-text: #1e3a8a;
   --tg-bubble-in-meta: #64748b;
-  --tg-bubble-out-meta: #2563eb;
+  --tg-bubble-out-meta: #1d4ed8;
   --tg-text: #0f172a;
   --tg-text-muted: #64748b;
-  --tg-border: #e2e8f0;
+  --tg-border: #cbd5e1;
   --tg-pattern-opacity: 0.04;
   --tg-date-pill-bg: rgba(0, 0, 0, 0.08);
   --tg-date-pill-text: #334155;
@@ -48,6 +54,12 @@
   --tg-titlebar-border: #e2e8f0;
   --tg-titlebar-text: #0f172a;
   --tg-titlebar-muted: #64748b;
+  --tg-border-accent: #3b82f6;
+  --tg-card-border: rgba(37, 99, 235, 0.2);
+  --tg-glow-color: rgba(37, 99, 235, 0.25);
+  --tg-gradient-main: linear-gradient(135deg, #2563eb 0%, #60a5fa 100%);
+  --tg-gradient-header: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%);
+  --tg-window-border: #cbd5e1;
 }
 
 /* Global Light Theme Overrides for hardcoded dark classes */
@@ -274,5 +286,33 @@ body,
   background-color: rgba(255, 255, 255, 0.95);
   border: 1px solid rgba(0, 0, 0, 0.1);
 }
+
+/* Framed Buttons, Glowing Outlines & Glass Borders */
+.tg-framed-btn {
+  border: 1px solid var(--tg-card-border);
+  background-color: var(--tg-surface);
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.tg-framed-btn:hover {
+  border-color: var(--tg-border-accent);
+  background-color: var(--tg-surface-hover);
+  box-shadow: 0 4px 14px -2px var(--tg-glow-color);
+  transform: translateY(-1px);
+}
+.tg-framed-btn:active {
+  transform: scale(0.98);
+}
+
+.tg-glow-border {
+  border: 1px solid var(--tg-border-accent) !important;
+  box-shadow: 0 0 16px -2px var(--tg-glow-color) !important;
+}
+
+.tg-accent-gradient {
+  background: var(--tg-gradient-main) !important;
+  box-shadow: 0 4px 14px -2px var(--tg-glow-color);
+}
+
 
 

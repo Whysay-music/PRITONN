@@ -26,6 +26,7 @@ import {
   ArrowLeft,
   Gamepad2,
   Lock,
+  GripVertical,
 } from 'lucide-react';
 import { Chat, User, Story, CustomFolder, Message } from '../types';
 import { StoriesBar } from './StoriesBar';
@@ -125,6 +126,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, []);
   const [highlightedChatId, setHighlightedChatId] = useState<string | null>(null);
   const prevLastMsgMap = useRef<{ [chatId: string]: string | undefined }>({});
+
+  // Drag and Drop & Custom Chat Reordering state
+  const [chatOrder, setChatOrder] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(`pritonn_chat_order_${currentUser.id}`);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const saveChatOrder = (newOrder: string[]) => {
+    setChatOrder(newOrder);
+    try {
+      localStorage.setItem(`pritonn_chat_order_${currentUser.id}`, JSON.stringify(newOrder));
+    } catch {}
+  };
+
+  const [draggedChatId, setDraggedChatId] = useState<string | null>(null);
+  const [dragOverChatId, setDragOverChatId] = useState<string | null>(null);
+  const [isOverArchiveZone, setIsOverArchiveZone] = useState<boolean>(false);
 
   // Global Messages Search State
   const [matchedMessages, setMatchedMessages] = useState<Message[]>([]);
@@ -228,14 +250,71 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return name.includes(q) || lastMsg.includes(q);
   });
 
-  // Sort: Pinned chats first, then recent
-  const sortedChats = [...filteredChats].sort((a, b) => {
-    if (a.isPinned && !b.isPinned) return -1;
-    if (!a.isPinned && b.isPinned) return 1;
-    const timeA = a.lastMessage?.timestamp || 0;
-    const timeB = b.lastMessage?.timestamp || 0;
-    return timeB - timeA;
+  // Sort: Pinned chats first (respecting custom order if set), then regular chats (custom order or recent timestamp)
+  const pinnedChats = filteredChats.filter((c) => c.isPinned);
+  const regularChats = filteredChats.filter((c) => !c.isPinned);
+
+  pinnedChats.sort((a, b) => {
+    const iA = chatOrder.indexOf(a.id);
+    const iB = chatOrder.indexOf(b.id);
+    if (iA !== -1 && iB !== -1) return iA - iB;
+    if (iA !== -1) return -1;
+    if (iB !== -1) return 1;
+    return (b.lastMessage?.timestamp || 0) - (a.lastMessage?.timestamp || 0);
   });
+
+  regularChats.sort((a, b) => {
+    const iA = chatOrder.indexOf(a.id);
+    const iB = chatOrder.indexOf(b.id);
+    if (iA !== -1 && iB !== -1) return iA - iB;
+    if (iA !== -1) return -1;
+    if (iB !== -1) return 1;
+    return (b.lastMessage?.timestamp || 0) - (a.lastMessage?.timestamp || 0);
+  });
+
+  const sortedChats = [...pinnedChats, ...regularChats];
+
+  const handleDropOnChat = (targetChatId: string) => {
+    if (!draggedChatId || draggedChatId === targetChatId) {
+      setDraggedChatId(null);
+      setDragOverChatId(null);
+      return;
+    }
+
+    const currentIds = sortedChats.map((c) => c.id);
+    const fromIndex = currentIds.indexOf(draggedChatId);
+    const toIndex = currentIds.indexOf(targetChatId);
+
+    if (fromIndex !== -1 && toIndex !== -1) {
+      const updated = [...currentIds];
+      const [moved] = updated.splice(fromIndex, 1);
+      updated.splice(toIndex, 0, moved);
+      saveChatOrder(updated);
+    }
+
+    setDraggedChatId(null);
+    setDragOverChatId(null);
+  };
+
+  const handleDropIntoArchive = () => {
+    if (!draggedChatId) return;
+    const target = chats.find((c) => c.id === draggedChatId);
+    if (target && onToggleArchiveChat && !target.isArchived) {
+      onToggleArchiveChat(target);
+    }
+    setDraggedChatId(null);
+    setDragOverChatId(null);
+    setIsOverArchiveZone(false);
+  };
+
+  const handleExtractFromArchive = (chatId: string) => {
+    const target = chats.find((c) => c.id === chatId);
+    if (target && onToggleArchiveChat && target.isArchived) {
+      onToggleArchiveChat(target);
+    }
+    setDraggedChatId(null);
+    setDragOverChatId(null);
+  };
 
   const archivedChats = chats.filter((c) => c.isArchived);
 
@@ -452,23 +531,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
 
-        {/* Archive Folder Banner at top of chat list */}
-        {!showArchive && archivedChats.length > 0 && (
+        {/* Archive Folder Banner & Drag-to-Archive Drop Zone at top of chat list */}
+        {!showArchive && (archivedChats.length > 0 || draggedChatId) && (
           <div
             onClick={() => setShowArchive(true)}
-            className="flex items-center gap-3 p-2.5 rounded-2xl hover:bg-[var(--tg-surface-hover)] cursor-pointer transition mb-1 border-b border-[var(--tg-border)]/40"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsOverArchiveZone(true);
+            }}
+            onDragLeave={() => setIsOverArchiveZone(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              handleDropIntoArchive();
+            }}
+            className={`flex items-center gap-3 p-2.5 rounded-2xl cursor-pointer transition-all mb-1 border ${
+              isOverArchiveZone
+                ? 'bg-[var(--tg-accent)]/25 border-[var(--tg-border-accent)] scale-[1.02] shadow-lg animate-pulse'
+                : draggedChatId
+                ? 'bg-[var(--tg-surface)] border-dashed border-[var(--tg-border-accent)]/70 animate-pulse'
+                : 'hover:bg-[var(--tg-surface-hover)] border-transparent border-b-[var(--tg-card-border)]'
+            }`}
           >
-            <div className="w-12 h-12 rounded-full bg-[#182533] flex items-center justify-center text-[#5288c1] shadow-inner">
-              <Archive size={20} />
+            <div
+              className={`w-12 h-12 rounded-full flex items-center justify-center shadow-inner transition-colors ${
+                isOverArchiveZone ? 'bg-[var(--tg-accent)] text-white' : 'bg-[#182533] text-[#5288c1]'
+              }`}
+            >
+              <Archive size={20} className={isOverArchiveZone ? 'animate-bounce' : ''} />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="font-semibold text-sm leading-tight text-[var(--tg-text)]">
-                Архив чатов
+              <div className="font-semibold text-sm leading-tight text-[var(--tg-text)] flex items-center justify-between">
+                <span>Архив чатов</span>
+                {draggedChatId && (
+                  <span className="text-[10px] text-[var(--tg-accent)] font-bold">
+                    {isOverArchiveZone ? 'Отпустите здесь' : 'Бросьте в архив'}
+                  </span>
+                )}
               </div>
               <div className="text-xs text-[var(--tg-text-muted)] truncate mt-0.5">
-                {archivedChats.length} диалогов скрыто
+                {draggedChatId
+                  ? 'Перетащите диалог сюда для скрытия'
+                  : `${archivedChats.length} диалогов скрыто`}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Drag out of archive drop target (when inside archive) */}
+        {showArchive && draggedChatId && (
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsOverArchiveZone(true);
+            }}
+            onDragLeave={() => setIsOverArchiveZone(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (draggedChatId) handleExtractFromArchive(draggedChatId);
+            }}
+            className="p-3 mb-2 rounded-2xl border-2 border-dashed border-emerald-500/70 bg-emerald-500/15 text-emerald-400 text-xs font-semibold text-center flex items-center justify-center gap-2 cursor-pointer shadow animate-pulse"
+          >
+            <ArrowLeft size={16} />
+            <span>Отпустите здесь, чтобы вернуть чат из Архива</span>
           </div>
         )}
 
@@ -496,20 +620,52 @@ export const Sidebar: React.FC<SidebarProps> = ({
             const isHighlighted = highlightedChatId === chat.id;
             const localDraft = getChatDraft(currentUser.id, chat.id);
 
+            const isBeingDragged = draggedChatId === chat.id;
+            const isTargetOver = dragOverChatId === chat.id;
+
             return (
               <div
                 key={chat.id}
+                draggable={!searchQuery}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/plain', chat.id);
+                  setDraggedChatId(chat.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedChatId(null);
+                  setDragOverChatId(null);
+                  setIsOverArchiveZone(false);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (draggedChatId && draggedChatId !== chat.id) {
+                    setDragOverChatId(chat.id);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dragOverChatId === chat.id) setDragOverChatId(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleDropOnChat(chat.id);
+                }}
                 onClick={() => onSelectChat(chat)}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setChatContextMenu({ x: e.clientX, y: e.clientY, chat });
                 }}
-                className={`flex items-center gap-3 p-2.5 rounded-2xl cursor-pointer my-0.5 relative group select-none ${
+                className={`flex items-center gap-3 p-2.5 rounded-2xl cursor-pointer my-0.5 relative group select-none transition-all duration-150 ${
                   isActive
-                    ? 'bg-[#2b5278] text-white shadow-sm transition-none'
-                    : 'hover:bg-[var(--tg-surface-hover)] text-[var(--tg-text)] transition-colors duration-150'
-                } ${isHighlighted && !isActive ? 'animate-chat-updated ring-1 ring-[#5288c1]/60' : ''}`}
+                    ? 'bg-gradient-to-r from-[var(--tg-accent)]/35 via-[#2b5278]/40 to-[#1c5f94]/20 border border-[var(--tg-border-accent)]/60 text-white shadow-md'
+                    : 'border border-transparent hover:border-[var(--tg-card-border)] hover:bg-[var(--tg-surface-hover)] text-[var(--tg-text)]'
+                } ${isBeingDragged ? 'opacity-30 scale-95 border-dashed border-[var(--tg-accent)]' : ''} ${
+                  isHighlighted && !isActive ? 'animate-chat-updated ring-1 ring-[#5288c1]/60' : ''
+                }`}
               >
+                {/* Visual line indicating where the chat will drop when reordering */}
+                {isTargetOver && (
+                  <div className="absolute -top-1 left-2 right-2 h-1 bg-[var(--tg-accent)] rounded-full shadow-md z-30 animate-pulse" />
+                )}
                 {/* Chat Avatar */}
                 <div className="relative flex-shrink-0">
                   {isSaved ? (
@@ -613,7 +769,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </p>
                     )}
 
-                    {/* Unread badge & pinned */}
+                    {/* Unread badge, pinned & drag handle */}
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       {chat.isPinned && (
                         <Pin
@@ -626,6 +782,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           {chat.unreadCount}
                         </span>
                       )}
+                      <span title="Перетащите для изменения порядка" className="hidden sm:inline-flex">
+                        <GripVertical
+                          size={13}
+                          className="text-[var(--tg-text-muted)] opacity-0 group-hover:opacity-40 transition-opacity cursor-grab active:cursor-grabbing"
+                        />
+                      </span>
                     </div>
                   </div>
                 </div>

@@ -100,6 +100,8 @@ export interface Message {
   replyTo?: ReplyInfo | null;
   timestamp: number;
   status?: 'sent' | 'read';
+  readAt?: number;
+  readBy?: Array<{ userId: string; timestamp: number; userName?: string }>;
   views?: string;
   reactions?: Record<string, string[]>; // emoji -> [userIds]
   deletedFor?: string[];

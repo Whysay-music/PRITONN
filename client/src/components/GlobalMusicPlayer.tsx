@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, X, Volume2, VolumeX, SkipBack, SkipForward, Music } from 'lucide-react';
 import { resolveMediaUrl } from '../utils/avatar';
+import { Socket } from 'socket.io-client';
 
 export interface AudioTrack {
   id: string;
@@ -13,6 +14,8 @@ export interface AudioTrack {
 interface GlobalMusicPlayerProps {
   currentTrack: AudioTrack | null;
   playlist?: AudioTrack[];
+  socket?: Socket | null;
+  currentUserId?: string;
   onClose: () => void;
   onTrackChange?: (track: AudioTrack) => void;
 }
@@ -20,6 +23,8 @@ interface GlobalMusicPlayerProps {
 export const GlobalMusicPlayer: React.FC<GlobalMusicPlayerProps> = ({
   currentTrack,
   playlist = [],
+  socket,
+  currentUserId,
   onClose,
   onTrackChange,
 }) => {
@@ -38,19 +43,46 @@ export const GlobalMusicPlayer: React.FC<GlobalMusicPlayerProps> = ({
       audioRef.current.playbackRate = playbackRate;
       audioRef.current
         .play()
-        .then(() => setIsPlaying(true))
+        .then(() => {
+          setIsPlaying(true);
+          if (socket && currentUserId) {
+            socket.emit('user_listening', {
+              userId: currentUserId,
+              trackTitle: currentTrack.title,
+              artist: currentTrack.artist || '',
+              isPlaying: true,
+            });
+          }
+        })
         .catch(() => setIsPlaying(false));
     }
-  }, [currentTrack]);
+
+    return () => {
+      if (socket && currentUserId) {
+        socket.emit('user_listening', { userId: currentUserId, isPlaying: false });
+      }
+    };
+  }, [currentTrack, socket, currentUserId]);
 
   const togglePlay = () => {
     if (!audioRef.current) return;
     if (isPlaying) {
       audioRef.current.pause();
       setIsPlaying(false);
+      if (socket && currentUserId) {
+        socket.emit('user_listening', { userId: currentUserId, isPlaying: false });
+      }
     } else {
       audioRef.current.play();
       setIsPlaying(true);
+      if (socket && currentUserId && currentTrack) {
+        socket.emit('user_listening', {
+          userId: currentUserId,
+          trackTitle: currentTrack.title,
+          artist: currentTrack.artist || '',
+          isPlaying: true,
+        });
+      }
     }
   };
 

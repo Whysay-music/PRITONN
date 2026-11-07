@@ -2076,21 +2076,21 @@ app.post('/api/messages/:id/transcribe', async (req, res) => {
 
 // App Version & In-App Updater Metadata Endpoint
 app.get('/api/app-version', (req, res) => {
-  let pkgVersion = '5.15.0';
+  let pkgVersion = '5.16.0';
   try {
     const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
     if (rootPkg && rootPkg.version) pkgVersion = rootPkg.version;
   } catch {}
   res.json({
     version: pkgVersion,
-    releaseNotes: 'PRITONN v' + pkgVersion + ' — Стильный дизайн бокового меню с рамками кнопок, перетаскивание чатов (Drag & Drop) и архив, темы оформления (градиенты, рамки и цвета окон), просмотр времени прочтения сообщений в контекстном меню.',
+    releaseNotes: 'PRITONN v' + pkgVersion + ' — Виртуальные подарки и Telegram Stars, секретные фото (1 просмотр), музыкальный статус «Слушает сейчас», совместный просмотр видео (Watch Together), AI шумоподавление и фон камеры, темы/форумы в группах, быстрые шаблоны ответов и переводчик сообщений.',
     apkUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_v${pkgVersion}.apk`,
     winSetupUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_Setup_${pkgVersion}.exe`,
     releasePageUrl: 'https://github.com/Whysay-music/PRITONN/releases/latest',
   });
 });
 
-// Burn on read / self-destruct
+// Burn on read / self-destruct / view-once
 app.post('/api/messages/:id/burn', (req, res) => {
   const { id } = req.params;
   const idx = db.messages.findIndex(m => m.id === id);
@@ -2102,6 +2102,65 @@ app.post('/api/messages/:id/burn', (req, res) => {
     return res.json({ success: true, id });
   }
   res.json({ success: false });
+});
+
+// Send virtual gift endpoint
+app.post('/api/users/:userId/gifts', (req, res) => {
+  const { userId } = req.params;
+  const { fromUserId, gift, message } = req.body;
+  const targetUser = db.users.find(u => u.id === userId);
+  if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+  const sender = db.users.find(u => u.id === fromUserId);
+  const senderName = sender ? sender.name : 'Пользователь';
+
+  const newGift = {
+    id: 'gift_' + uuidv4(),
+    giftId: gift?.id || 'gift_custom',
+    title: gift?.title || 'Подарок',
+    icon: gift?.icon || '🎁',
+    fromUserId: fromUserId || '',
+    fromUserName: senderName,
+    timestamp: Date.now(),
+    message: message || '',
+  };
+
+  targetUser.gifts = targetUser.gifts || [];
+  targetUser.gifts.unshift(newGift);
+
+  if (sender && sender.starsBalance !== undefined && gift?.price) {
+    sender.starsBalance = Math.max(0, sender.starsBalance - gift.price);
+  }
+
+  saveData(db);
+  io.emit('gift_received', { targetUserId: userId, gift: newGift });
+  res.json({ success: true, gift: newGift, user: targetUser });
+});
+
+// Create topic in group chat (Forum Topics)
+app.post('/api/chats/:chatId/topics', (req, res) => {
+  const { chatId } = req.params;
+  const { name, icon, color } = req.body;
+  const chat = db.chats.find(c => c.id === chatId);
+  if (!chat) return res.status(404).json({ error: 'Chat not found' });
+
+  chat.isForum = true;
+  chat.topics = chat.topics || [
+    { id: 'topic_general', name: 'Общий', icon: '💬', color: '#5288c1', createdAt: Date.now() }
+  ];
+
+  const newTopic = {
+    id: 'topic_' + uuidv4(),
+    name: name || 'Новая тема',
+    icon: icon || '💡',
+    color: color || '#38bdf8',
+    createdAt: Date.now()
+  };
+
+  chat.topics.push(newTopic);
+  saveData(db);
+  io.emit('topic_created', { chatId, topic: newTopic });
+  res.json({ success: true, topic: newTopic, chat });
 });
 
 // User Premium & Emoji Status
@@ -2241,6 +2300,23 @@ io.on('connection', (socket) => {
       saveData(db);
       io.emit('messages_read', { chatId, readerId: userId, readerName, readAt: now, messageIds: readMsgIds });
     }
+  });
+
+  socket.on('user_listening', ({ userId, trackTitle, artist, isPlaying } = {}) => {
+    if (!userId) return;
+    const user = db.users.find((u) => u.id === userId);
+    if (user) {
+      user.listeningTrack = isPlaying
+        ? { title: trackTitle || 'Трек', artist: artist || '', isPlaying: true }
+        : null;
+      io.emit('user_listening_updated', { userId, listeningTrack: user.listeningTrack });
+    }
+  });
+
+  socket.on('watch_together_sync', (payload) => {
+    if (!payload?.chatId) return;
+    socket.to(`voice_room_${payload.chatId}`).emit('watch_together_sync', payload);
+    socket.broadcast.emit('watch_together_sync', payload);
   });
 
   socket.on('user_offline', ({ userId }) => {

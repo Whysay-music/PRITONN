@@ -699,6 +699,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div className="flex items-center justify-between mb-0.5">
                     <div className="flex items-center gap-1 font-semibold text-sm truncate">
                       <span className="truncate">{displayName}</span>
+                      {targetUser?.listeningTrack?.isPlaying && (
+                        <span
+                          className="text-[10.5px] text-cyan-400 font-semibold flex items-center gap-0.5 ml-1 animate-pulse flex-shrink-0"
+                          title={`Слушает: ${targetUser.listeningTrack.title}`}
+                        >
+                          <span>🎵</span>
+                          <span className="truncate max-w-[90px] hidden sm:inline text-[10px] font-medium text-cyan-300">
+                            {targetUser.listeningTrack.title}
+                          </span>
+                        </span>
+                      )}
                       {isUserVerified(targetUser) && (
                         <TelegramVerifiedBadge
                           size={14}

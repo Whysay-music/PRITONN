@@ -21,12 +21,14 @@ import {
   Wand2,
   RefreshCw,
   Headphones,
+  Film,
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { Chat, User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { isUserVerified } from '../utils/verified';
 import { ScreenSharePickerModal, DesktopSource } from './ScreenSharePickerModal';
+import { WatchTogetherModal } from './WatchTogetherModal';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 import { VoiceEffectType, AVAILABLE_VOICE_EFFECTS, applyVoiceEffect } from '../utils/audioEffects';
 import {
@@ -121,6 +123,8 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const [isVoiceEffectsOpen, setIsVoiceEffectsOpen] = useState(false);
   const [isVoiceMonitorOn, setIsVoiceMonitorOn] = useState(false);
   const [isBackgroundBlur, setIsBackgroundBlur] = useState(false);
+  const [isWatchTogetherOpen, setIsWatchTogetherOpen] = useState(false);
+  const [isNoiseGateOn, setIsNoiseGateOn] = useState(true);
   const effectAudioCtxRef = useRef<AudioContext | null>(null);
   const effectCleanupRef = useRef<(() => void) | null>(null);
   const effectMonitorGainRef = useRef<GainNode | null>(null);
@@ -2206,6 +2210,29 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             <Radio size={19} className={isRecordingCall ? 'animate-spin' : ''} />
           </button>
 
+          {/* Watch Together & Studio Noise Filter Buttons */}
+          <button
+            type="button"
+            onClick={() => setIsWatchTogetherOpen(true)}
+            className="w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full bg-[#242f3d] hover:bg-rose-600/30 text-rose-400 hover:text-white transition shadow-md cursor-pointer active:scale-95"
+            title="Кинозал • Совместный просмотр видео (Watch Together)"
+          >
+            <Film size={19} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsNoiseGateOn(!isNoiseGateOn)}
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer active:scale-95 ${
+              isNoiseGateOn
+                ? 'bg-emerald-600 text-white shadow-emerald-600/40'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-zinc-400'
+            }`}
+            title={isNoiseGateOn ? 'AI Шумоподавление: ВКЛ' : 'AI Шумоподавление: ВЫКЛ'}
+          >
+            <Shield size={18} />
+          </button>
+
           {isVideoEnabled && (
             <button
               type="button"
@@ -2401,6 +2428,15 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         sources={desktopSources}
         onSelectSource={handleSelectDesktopSource}
         onClose={() => setIsScreenPickerOpen(false)}
+      />
+
+      {/* Watch Together Synchronized Cinema Modal */}
+      <WatchTogetherModal
+        isOpen={isWatchTogetherOpen}
+        socket={socket}
+        chatId={chat?.id || 'direct_call'}
+        currentUserId={currentUser?.id || ''}
+        onClose={() => setIsWatchTogetherOpen(false)}
       />
     </div>
   );

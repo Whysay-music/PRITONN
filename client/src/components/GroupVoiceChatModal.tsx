@@ -21,6 +21,7 @@ import {
   Tv,
   Wand2,
   Headphones,
+  Film,
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { Chat, User } from '../types';
@@ -29,6 +30,7 @@ import { isUserVerified } from '../utils/verified';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 import { VoiceEffectType, AVAILABLE_VOICE_EFFECTS, applyVoiceEffect } from '../utils/audioEffects';
 import { ScreenSharePickerModal, DesktopSource } from './ScreenSharePickerModal';
+import { WatchTogetherModal } from './WatchTogetherModal';
 import {
   hasNativeAndroidScreenShare,
   startNativeAndroidScreenShare,
@@ -98,6 +100,7 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
   const [isVoiceEffectsOpen, setIsVoiceEffectsOpen] = useState(false);
   const [isVoiceMonitorOn, setIsVoiceMonitorOn] = useState(false);
   const [isScreenPickerOpen, setIsScreenPickerOpen] = useState(false);
+  const [isWatchTogetherOpen, setIsWatchTogetherOpen] = useState(false);
   const [desktopSources, setDesktopSources] = useState<DesktopSource[]>([]);
 
   const modalContainerRef = useRef<HTMLDivElement>(null);
@@ -1543,6 +1546,19 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
 
           <button
             type="button"
+            onClick={() => setIsWatchTogetherOpen(true)}
+            className={`w-11 h-11 sm:w-12 sm:h-12 flex items-center justify-center rounded-full transition shadow-md cursor-pointer relative active:scale-95 ${
+              isWatchTogetherOpen
+                ? 'bg-amber-600 text-white ring-2 ring-amber-400'
+                : 'bg-[#242f3d] hover:bg-[#2b394a] text-white'
+            }`}
+            title="Кинозал • Совместный просмотр видео"
+          >
+            <Film size={19} />
+          </button>
+
+          <button
+            type="button"
             onClick={(e) => handleLeaveRoom(e)}
             className="w-11 h-11 sm:w-auto sm:px-4 sm:py-2.5 flex items-center justify-center gap-1.5 rounded-full sm:rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition shadow-md shadow-rose-600/30 cursor-pointer active:scale-95"
             title="Завершить / выйти из голосового чата"
@@ -1552,6 +1568,14 @@ export const GroupVoiceChatModal: React.FC<GroupVoiceChatModalProps> = ({
           </button>
         </div>
       </div>
+
+      <WatchTogetherModal
+        isOpen={isWatchTogetherOpen}
+        onClose={() => setIsWatchTogetherOpen(false)}
+        socket={socket}
+        chatId={chat?.id || 'group_general'}
+        currentUserId={currentUser?.id || ''}
+      />
 
       <ScreenSharePickerModal
         isOpen={isScreenPickerOpen}

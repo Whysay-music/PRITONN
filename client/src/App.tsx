@@ -965,6 +965,9 @@ export const App: React.FC = () => {
     gifUrl?: string;
     gameData?: any;
     scheduledFor?: number;
+    isViewOnce?: boolean;
+    viewTimer?: number;
+    topicId?: string;
   }) => {
     if (!activeChat || !currentUser) return;
 

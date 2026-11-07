@@ -16,11 +16,17 @@ import {
   Trash2,
   Ban,
   Phone,
+  Gift,
+  Star,
+  MessageSquare,
+  Sparkles,
 } from 'lucide-react';
 import { Chat, User, Message } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { isUserVerified } from '../utils/verified';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import { GiftsModal, GiftItem } from './GiftsModal';
+import { API_BASE_URL } from '../config';
 
 interface ChatInfoDrawerProps {
   chat: Chat | null;
@@ -55,6 +61,8 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'media' | 'files' | 'members'>('media');
   const [isMuted, setIsMuted] = useState(false);
+  const [isGiftsModalOpen, setIsGiftsModalOpen] = useState(false);
+  const [giftSentToast, setGiftSentToast] = useState<string | null>(null);
 
   if (!isOpen || !chat) return null;
 
@@ -153,28 +161,80 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
               : chat.targetUser?.lastSeen || 'был(а) недавно'}
           </span>
 
-          {chat.type === 'direct' && onStartVoiceCall && (
-            <button
-              type="button"
-              onClick={onStartVoiceCall}
-              className="mt-3 px-4 py-2 rounded-xl bg-[#5288c1]/15 hover:bg-[#5288c1]/25 text-[#5288c1] text-xs font-semibold flex items-center gap-2 transition border border-[#5288c1]/30 cursor-pointer shadow-sm active:scale-95"
-            >
-              <Phone size={14} />
-              <span>Позвонить</span>
-            </button>
+          {/* Direct Chat Actions: Call & Send Gift */}
+          {chat.type === 'direct' && targetUser && (
+            <div className="flex items-center gap-2 mt-3">
+              {onStartVoiceCall && (
+                <button
+                  type="button"
+                  onClick={onStartVoiceCall}
+                  className="px-3.5 py-2 rounded-xl bg-[#5288c1]/15 hover:bg-[#5288c1]/25 text-[#5288c1] text-xs font-semibold flex items-center gap-1.5 transition border border-[#5288c1]/30 cursor-pointer shadow-sm active:scale-95"
+                >
+                  <Phone size={14} />
+                  <span>Позвонить</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsGiftsModalOpen(true)}
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-300 text-xs font-semibold flex items-center gap-1.5 transition border border-amber-400/40 cursor-pointer shadow-sm active:scale-95"
+              >
+                <Gift size={14} className="text-amber-400" />
+                <span>Подарок</span>
+              </button>
+            </div>
           )}
 
-          {(chat.type === 'group' || chat.type === 'channel') && onOpenEditChatModal && (
-            <button
-              type="button"
-              onClick={() => onOpenEditChatModal(chat)}
-              className="mt-3 px-3.5 py-1.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-semibold flex items-center gap-1.5 transition border border-blue-500/30"
-            >
-              <Edit3 size={13} />
-              <span>Редактировать чат</span>
-            </button>
+          {/* Group Forum / Topics Toggle */}
+          {chat.type === 'group' && onOpenEditChatModal && (
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                type="button"
+                onClick={() => onOpenEditChatModal(chat)}
+                className="px-3 py-1.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-semibold flex items-center gap-1.5 transition border border-blue-500/30 cursor-pointer"
+              >
+                <Edit3 size={13} />
+                <span>Настроить чат</span>
+              </button>
+            </div>
           )}
         </div>
+
+        {/* Gift Showcase for user */}
+        {targetUser && targetUser.gifts && targetUser.gifts.length > 0 && (
+          <div className="p-3.5 border-b border-[var(--tg-border)] bg-[var(--tg-sidebar)]/50">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[11px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                <Sparkles size={12} />
+                <span>Витрина подарков ({targetUser.gifts.length})</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+              {targetUser.gifts.map((g, i) => (
+                <div
+                  key={i}
+                  className="flex flex-col items-center p-2 rounded-xl bg-[var(--tg-surface)] border border-amber-500/30 min-w-[76px] max-w-[84px] text-center shadow-sm"
+                  title={`${g.title} от ${g.fromUserName}${g.message ? `: «${g.message}»` : ''}`}
+                >
+                  <span className="text-2xl mb-0.5">{g.icon}</span>
+                  <span className="text-[10px] font-bold text-[var(--tg-text)] truncate w-full">
+                    {g.title}
+                  </span>
+                  <span className="text-[8.5px] text-[var(--tg-text-muted)] truncate w-full">
+                    от {g.fromUserName.split(' ')[0]}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Toast confirmation */}
+        {giftSentToast && (
+          <div className="mx-4 mt-2 p-2 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs text-center font-medium animate-in fade-in">
+            {giftSentToast}
+          </div>
+        )}
 
         {/* Info details */}
         <div className="p-4 flex flex-col gap-3 border-b border-[var(--tg-border)]">
@@ -427,6 +487,33 @@ export const ChatInfoDrawer: React.FC<ChatInfoDrawerProps> = ({
           )}
         </div>
       </div>
+
+      {/* Gifts Modal */}
+      {targetUser && currentUser && (
+        <GiftsModal
+          isOpen={isGiftsModalOpen}
+          targetUser={targetUser}
+          currentUser={currentUser}
+          onClose={() => setIsGiftsModalOpen(false)}
+          onSendGift={(gift, message) => {
+            fetch(`${API_BASE_URL}/api/users/${targetUser.id}/gifts`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                fromUserId: currentUser.id,
+                gift,
+                message,
+              }),
+            })
+              .then((r) => r.json())
+              .then(() => {
+                setGiftSentToast(`Подарок «${gift.title}» успешно отправлен! 🎁`);
+                setTimeout(() => setGiftSentToast(null), 3500);
+              })
+              .catch(() => {});
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -76,6 +76,8 @@ import { RockPaperScissorsGame } from './RockPaperScissorsGame';
 import { DiceDuelGame } from './DiceDuelGame';
 import { ChatWallpaperModal } from './ChatWallpaperModal';
 import { ScheduledMessageModal } from './ScheduledMessageModal';
+import { QuickTemplatesModal } from './QuickTemplatesModal';
+import { translateText, SUPPORTED_LANGUAGES } from '../utils/translator';
 import { getChatDraft, setChatDraft, clearChatDraft } from '../utils/drafts';
 
 interface ChatAreaProps {
@@ -108,6 +110,9 @@ interface ChatAreaProps {
     gifUrl?: string;
     gameData?: any;
     scheduledFor?: number;
+    isViewOnce?: boolean;
+    viewTimer?: number;
+    topicId?: string;
   }) => void;
   onEditMessage?: (messageId: string, newText: string) => void;
   onVotePoll?: (pollId: string, optionId: string) => void;
@@ -308,6 +313,30 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; message: Message } | null>(null);
   const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
 
+  // Quick templates, view-once, forum topics state
+  const [isQuickTemplatesOpen, setIsQuickTemplatesOpen] = useState(false);
+  const [isViewOnceSend, setIsViewOnceSend] = useState(false);
+  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+  const [activeViewOnceMedia, setActiveViewOnceMedia] = useState<{ id: string; url: string; timer: number; remaining: number } | null>(null);
+
+  useEffect(() => {
+    if (!activeViewOnceMedia) return;
+    if (activeViewOnceMedia.remaining <= 0) {
+      const msgId = activeViewOnceMedia.id;
+      setActiveViewOnceMedia(null);
+      if (onBurnMessage) {
+        onBurnMessage(msgId);
+      } else {
+        fetch(`${API_BASE_URL}/api/messages/${msgId}/burn`, { method: 'POST' }).catch(() => {});
+      }
+      return;
+    }
+    const timer = setTimeout(() => {
+      setActiveViewOnceMedia((prev) => (prev ? { ...prev, remaining: prev.remaining - 1 } : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [activeViewOnceMedia, onBurnMessage]);
+
   const handleCopyText = (text: string, msgId: string) => {
     navigator.clipboard.writeText(text);
     setCopiedMsgId(msgId);
@@ -492,12 +521,14 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
       isSpoiler: isSpoilerSend,
       burnTimer: selectedBurnTimer,
       scheduledFor,
+      topicId: selectedTopicId || undefined,
     });
 
     setInputText('');
     clearChatDraft(currentUser.id, chat.id);
     if (onSaveDraft) onSaveDraft(chat.id, '');
     setIsSpoilerSend(false);
+    setIsViewOnceSend(false);
     setSelectedBurnTimer(undefined);
     setReplyingTo(null);
     setIsEmojiPickerOpen(false);
@@ -909,6 +940,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           replyToId: replyIdToSend,
           isSpoiler: spoilerToSend,
           burnTimer: burnToSend,
+          isViewOnce: isViewOnceSend,
+          viewTimer: isViewOnceSend ? (burnToSend || 10) : undefined,
+          topicId: selectedTopicId || undefined,
         });
         setInputText('');
         if (chat) {
@@ -916,6 +950,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           if (onSaveDraft) onSaveDraft(chat.id, '');
         }
         setIsSpoilerSend(false);
+        setIsViewOnceSend(false);
         setSelectedBurnTimer(undefined);
         setReplyingTo(null);
         setIsUploadingMedia(false);
@@ -945,6 +980,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         replyToId: replyIdToSend,
         isSpoiler: spoilerToSend,
         burnTimer: burnToSend,
+        isViewOnce: isViewOnceSend,
+        viewTimer: isViewOnceSend ? (burnToSend || 10) : undefined,
+        topicId: selectedTopicId || undefined,
       });
       setInputText('');
       if (chat) {
@@ -952,6 +990,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         if (onSaveDraft) onSaveDraft(chat.id, '');
       }
       setIsSpoilerSend(false);
+      setIsViewOnceSend(false);
       setSelectedBurnTimer(undefined);
       setReplyingTo(null);
       setIsUploadingMedia(false);
@@ -1196,6 +1235,72 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
       </header>
 
+      {/* Forum Topics Bar for Group Chats */}
+      {chat.isForum && (
+        <div className="bg-[var(--tg-sidebar)]/90 backdrop-blur-md border-b border-[var(--tg-border)] px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto scrollbar-none z-10 text-xs select-none">
+          <button
+            type="button"
+            onClick={() => setSelectedTopicId(null)}
+            className={`px-3 py-1 rounded-full font-medium transition cursor-pointer flex-shrink-0 flex items-center gap-1 text-[11px] ${
+              selectedTopicId === null
+                ? 'bg-[var(--tg-accent)] text-white shadow-sm'
+                : 'text-[var(--tg-text-muted)] hover:text-[var(--tg-text)] hover:bg-[var(--tg-surface-hover)]'
+            }`}
+          >
+            <span>#</span>
+            <span>Все темы</span>
+          </button>
+          {(chat.topics && chat.topics.length > 0
+            ? chat.topics
+            : [
+                { id: 'general', name: 'Общий', icon: '💬' },
+                { id: 'gaming', name: 'Игры', icon: '🎮' },
+                { id: 'music', name: 'Музыка', icon: '🎵' },
+                { id: 'help', name: 'Вопросы & Ответы', icon: '❓' },
+              ]
+          ).map((topic) => (
+            <button
+              key={topic.id}
+              type="button"
+              onClick={() => setSelectedTopicId(topic.id)}
+              className={`px-3 py-1 rounded-full font-medium transition cursor-pointer flex-shrink-0 flex items-center gap-1 text-[11px] ${
+                selectedTopicId === topic.id
+                  ? 'bg-[var(--tg-accent)] text-white shadow-sm'
+                  : 'text-[var(--tg-text-muted)] hover:text-[var(--tg-text)] hover:bg-[var(--tg-surface-hover)]'
+              }`}
+            >
+              <span>{topic.icon || '💬'}</span>
+              <span>{topic.name}</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => {
+              const name = prompt('Введите название новой темы:');
+              if (name && name.trim()) {
+                fetch(`${API_BASE_URL}/api/chats/${chat.id}/topics`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: name.trim(), icon: '💬' }),
+                })
+                  .then((r) => r.json())
+                  .then((newT) => {
+                    if (newT && newT.id) {
+                      if (!chat.topics) chat.topics = [];
+                      chat.topics.push(newT);
+                      setSelectedTopicId(newT.id);
+                    }
+                  })
+                  .catch(() => {});
+              }
+            }}
+            className="px-2.5 py-1 rounded-full text-[var(--tg-accent)] hover:bg-[var(--tg-accent)]/15 font-semibold transition cursor-pointer flex-shrink-0 flex items-center gap-1 text-[11px] border border-[var(--tg-accent)]/30"
+          >
+            <span>+ Тема</span>
+          </button>
+        </div>
+      )}
+
       {/* In-chat Search Bar */}
       {isSearchingChat && (
         <div className="bg-[var(--tg-surface)] border-b border-[var(--tg-border)] px-4 py-2 flex items-center gap-2 animate-fade-in z-20">
@@ -1281,13 +1386,17 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           </span>
         </div>
 
-        {/* Message feed with optional search filter */}
+        {/* Message feed with optional search filter and forum topic filter */}
         {(() => {
-          const visibleMessages = chatSearchQuery.trim()
-            ? messages.filter((m) =>
-                m.text?.toLowerCase().includes(chatSearchQuery.toLowerCase())
-              )
-            : messages;
+          const visibleMessages = messages.filter((m) => {
+            if (chatSearchQuery.trim() && !m.text?.toLowerCase().includes(chatSearchQuery.toLowerCase())) {
+              return false;
+            }
+            if (chat?.isForum && selectedTopicId && m.topicId && m.topicId !== selectedTopicId) {
+              return false;
+            }
+            return true;
+          });
 
           if (chatSearchQuery.trim() && visibleMessages.length === 0) {
             return (
@@ -1573,8 +1682,43 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   </div>
                 )}
 
+                {/* View Once Media */}
+                {msg.isViewOnce && (
+                  msg.viewOnceBurned ? (
+                    <div className="flex items-center gap-2 px-3 py-2.5 bg-black/30 rounded-xl border border-white/10 text-xs text-white/60 mb-1.5 select-none">
+                      <Flame size={16} className="text-rose-400" />
+                      <span>🔥 Секретное медиа сгорело после 1 просмотра</span>
+                    </div>
+                  ) : (
+                    <div
+                      onClick={() => {
+                        const dur = msg.viewTimer || 10;
+                        setActiveViewOnceMedia({
+                          id: msg.id,
+                          url: resolveMediaUrl(msg.mediaUrl!),
+                          timer: dur,
+                          remaining: dur,
+                        });
+                      }}
+                      className="flex items-center gap-3 p-3 bg-gradient-to-r from-amber-500/25 via-rose-500/20 to-purple-500/20 hover:from-amber-500/35 hover:to-rose-500/30 border border-amber-500/40 rounded-xl cursor-pointer transition mb-1.5 shadow-md active:scale-98 select-none"
+                    >
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-amber-500 to-rose-600 flex items-center justify-center text-white shadow-md flex-shrink-0">
+                        <Flame size={20} className="animate-pulse" />
+                      </div>
+                      <div className="flex flex-col text-left">
+                        <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                          🔥 Секретное медиа (1 просмотр)
+                        </span>
+                        <span className="text-[10px] text-white/75">
+                          Нажмите для разового просмотра ({msg.viewTimer || 10} сек)
+                        </span>
+                      </div>
+                    </div>
+                  )
+                )}
+
                 {/* Image Media */}
-                {msg.mediaUrl && !msg.isRoundVideo && !msg.isSticker && !msg.isGif && (msg.mediaType === 'image' || (!msg.mediaType && !msg.isVoice)) && (
+                {!msg.isViewOnce && msg.mediaUrl && !msg.isRoundVideo && !msg.isSticker && !msg.isGif && (msg.mediaType === 'image' || (!msg.mediaType && !msg.isVoice)) && (
                   <div
                     onClick={() => {
                       if (msg.isSpoiler && !revealedSpoilers[msg.id]) {
@@ -2479,6 +2623,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   <EyeOff size={18} />
                 </button>
 
+                {/* View Once 1-view Send button */}
+                <button
+                  type="button"
+                  onClick={() => setIsViewOnceSend(!isViewOnceSend)}
+                  className={`p-1.5 rounded-full transition flex-shrink-0 cursor-pointer ${
+                    isViewOnceSend
+                      ? 'text-rose-400 bg-rose-500/25 ring-1 ring-rose-400 shadow-sm'
+                      : 'text-[var(--tg-text-muted)] hover:text-[var(--tg-text)]'
+                  }`}
+                  title={isViewOnceSend ? 'Режим «1 просмотр» активен' : 'Отправить фото/видео с просмотром 1 раз'}
+                >
+                  <Flame size={18} className={isViewOnceSend ? 'animate-pulse' : ''} />
+                </button>
+
                 {/* Emoji button */}
                 <button
                   type="button"
@@ -2504,6 +2662,16 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                   title="Стикеры и GIF анимации"
                 >
                   <Sparkles size={19} />
+                </button>
+
+                {/* Quick Templates button */}
+                <button
+                  type="button"
+                  onClick={() => setIsQuickTemplatesOpen(true)}
+                  className="p-1.5 rounded-full transition flex-shrink-0 cursor-pointer text-[var(--tg-text-muted)] hover:text-amber-400"
+                  title="Быстрые шаблоны ответов"
+                >
+                  <Bot size={19} />
                 </button>
               </div>
 
@@ -2728,6 +2896,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
               </button>
             )}
 
+            {/* Translate Message */}
+            {contextMenu.message.text && (
+              <button
+                onClick={() => {
+                  handleTranslateMessage(contextMenu.message);
+                  setContextMenu(null);
+                }}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--tg-surface-hover)] transition text-left cursor-pointer text-amber-300"
+              >
+                <Languages size={14} className="text-amber-400" />
+                <span>{translatedMessages[contextMenu.message.id] ? 'Скрыть перевод' : 'Перевести сообщение'}</span>
+              </button>
+            )}
+
             <button
               onClick={() => {
                 onPinMessage(contextMenu.message.id);
@@ -2883,6 +3065,52 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           handleSend(undefined, false, targetTime);
         }}
       />
+
+      {/* Quick Templates Modal */}
+      <QuickTemplatesModal
+        isOpen={isQuickTemplatesOpen}
+        onClose={() => setIsQuickTemplatesOpen(false)}
+        onSelectTemplate={(text) => {
+          setInputText((prev) => (prev ? `${prev} ${text}` : text));
+          textareaRef.current?.focus();
+        }}
+      />
+
+      {/* Secret Media View-Once Overlay Viewer */}
+      {activeViewOnceMedia && (
+        <div className="fixed inset-0 z-[9999] bg-black/95 flex flex-col items-center justify-center p-4 backdrop-blur-md select-none animate-fade-in">
+          <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-rose-600/90 text-white text-xs font-bold shadow-lg animate-pulse">
+              <Flame size={15} />
+              <span>Самоуничтожение через {activeViewOnceMedia.remaining}с</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const msgId = activeViewOnceMedia.id;
+                setActiveViewOnceMedia(null);
+                if (onBurnMessage) onBurnMessage(msgId);
+                else fetch(`${API_BASE_URL}/api/messages/${msgId}/burn`, { method: 'POST' }).catch(() => {});
+              }}
+              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white cursor-pointer transition"
+              title="Закрыть и сжечь фото"
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <div className="relative max-h-[85vh] max-w-[90vw] flex items-center justify-center">
+            <img
+              src={activeViewOnceMedia.url}
+              alt="Секретное медиа"
+              className="max-h-[85vh] max-w-[90vw] object-contain rounded-2xl shadow-2xl pointer-events-none select-none"
+              onContextMenu={(e) => e.preventDefault()}
+            />
+          </div>
+          <div className="mt-4 text-xs text-white/60">
+            ⚠️ Это медиа исчезнет навсегда сразу после закрытия или истечения таймера
+          </div>
+        </div>
+      )}
     </div>
   );
 };

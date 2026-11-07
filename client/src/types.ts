@@ -23,6 +23,22 @@ export interface User {
   customFolders?: CustomFolder[];
   appLockPin?: string;
   appLockEnabled?: boolean;
+  starsBalance?: number;
+  gifts?: Array<{
+    id: string;
+    giftId: string;
+    title: string;
+    icon: string;
+    fromUserId: string;
+    fromUserName: string;
+    timestamp: number;
+    message?: string;
+  }>;
+  listeningTrack?: {
+    title: string;
+    artist?: string;
+    isPlaying: boolean;
+  } | null;
 }
 
 export interface Story {
@@ -59,6 +75,14 @@ export interface Chat {
   lastMessage?: Message | null;
   unreadCount?: number;
   wallpaper?: string;
+  isForum?: boolean;
+  topics?: Array<{
+    id: string;
+    name: string;
+    icon?: string;
+    color?: string;
+    createdAt: number;
+  }>;
 }
 
 export interface ReplyInfo {
@@ -125,5 +149,10 @@ export interface Message {
   gifUrl?: string;
   gameData?: any;
   translatedText?: string;
+  targetLang?: string;
   scheduledFor?: number;
+  isViewOnce?: boolean;
+  viewOnceBurned?: boolean;
+  viewTimer?: number;
+  topicId?: string;
 }

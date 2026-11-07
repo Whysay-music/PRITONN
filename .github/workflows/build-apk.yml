@@ -50,24 +50,24 @@ jobs:
 
       - name: Rename APK
         run: |
-          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.9.0.apk
+          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.9.1.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: PRITONN-Android-APK
-          path: PRITONN_v5.9.0.apk
+          path: PRITONN_v5.9.1.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/heads/main')
         with:
-          tag_name: v5.9.0
-          name: PRITONN v5.9.0 (Stickers, GIFs, Mini-Games, App Lock, Wallpapers & Scheduled Messages)
+          tag_name: v5.9.1
+          name: PRITONN v5.9.1 (Stickers, GIFs, Mini-Games, App Lock, Wallpapers & Scheduled Messages)
           body: |
-            ## 🟣 PRITONN Messenger v5.9.0 — Глобальное обновление функций!
+            ## 🟣 PRITONN Messenger v5.9.1 — Глобальное обновление функций!
             
-            ### Что нового в версии 5.9.0:
+            ### Что нового в версии 5.9.1:
             - 🐱 **Анимированные стикеры и поиск GIF**: Вкладка со стикерпаками (котята, Пепе, Telegram-утята) и категориями гифок (Огонь, Смех, Любовь, Танцы и др.).
             - 🎮 **Мини-игры прямо в чате**: Интерактивные дуэли в «Крестики-нолики» прямо внутри сообщения с другом в реальном времени!
             - 🔒 **Защита переписки (App Lock / PIN-код)**: Блокировка мессенджера 4-значным PIN-кодом и быстрая блокировка по иконке замочка.
@@ -78,6 +78,6 @@ jobs:
             - 🎙️ **Интерактивная звуковая волна голосовых**: Перемотка войсов в любую секунду кликом по звуковой дорожке.
             - 💻 **Сворачивание в трей на Windows**: Приложение аккуратно прячется в системный трей возле часов с быстрым контекстным меню.
             - 📱 **Управление активными сессиями**: Просмотр подключённых устройств (ПК и телефон) в настройках.
-          files: PRITONN_v5.9.0.apk
+          files: PRITONN_v5.9.1.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

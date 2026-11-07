@@ -44,19 +44,6 @@
       "lastSeenTimestamp": 1794003899344
     },
     {
-      "id": "user_a0543cfe-0df5-417e-8ec6-a4c552cf2cfb",
-      "name": "New Registered User",
-      "username": "testuser_1794002888824",
-      "password": "password123",
-      "phone": "",
-      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=testuser_1794002888824",
-      "bio": "Пользователь PRITONN",
-      "verified": false,
-      "online": false,
-      "lastSeen": "был(а) вчера в 23:40",
-      "lastSeenTimestamp": 1793997606224
-    },
-    {
       "id": "user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
       "name": "asdasdsdfsdf",
       "username": "asdasdas",
@@ -68,19 +55,6 @@
       "online": false,
       "lastSeen": "был(а) 53 мин. назад",
       "lastSeenTimestamp": 1794004574170
-    },
-    {
-      "id": "user_8f146b92-e260-4afa-958b-cccca5f3a6a5",
-      "name": "Тестовый",
-      "username": "testuser_1794003916828",
-      "password": "password123",
-      "phone": "",
-      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=testuser_1794003916828",
-      "bio": "Пользователь PRITONN",
-      "verified": false,
-      "online": false,
-      "lastSeen": "был(а) вчера в 23:19",
-      "lastSeenTimestamp": 1793996366872
     },
     {
       "id": "user_1d6be0e8-18b1-49eb-aae8-07471e596880",

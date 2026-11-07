@@ -115,14 +115,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [highlightedChatId, setHighlightedChatId] = useState<string | null>(null);
   const prevLastMsgMap = useRef<{ [chatId: string]: string | undefined }>({});
 
-  // Animate chat list item when a new message is received in background chats (NOT the currently active one)
+  // Animate chat list item when a new message is received in background chats (NEVER the currently active one)
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     chats.forEach((c) => {
       const prevMsgId = prevLastMsgMap.current[c.id];
       const currMsgId = c.lastMessage?.id;
-      // Do not blink if this chat is already open/active or if typing a draft
-      if (activeChat?.id !== c.id && prevMsgId !== undefined && currMsgId && prevMsgId !== currMsgId) {
+      // Strictly ignore active chat so it never blinks while typing or viewing
+      if (activeChat?.id === c.id) {
+        prevLastMsgMap.current[c.id] = currMsgId;
+        return;
+      }
+      if (prevMsgId !== undefined && currMsgId && prevMsgId !== currMsgId) {
         setHighlightedChatId(c.id);
         timer = setTimeout(() => {
           setHighlightedChatId((curr) => (curr === c.id ? null : curr));
@@ -426,11 +430,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   e.preventDefault();
                   setChatContextMenu({ x: e.clientX, y: e.clientY, chat });
                 }}
-                className={`flex items-center gap-3 p-2.5 rounded-2xl cursor-pointer transition-colors duration-150 my-0.5 relative group ${
+                className={`flex items-center gap-3 p-2.5 rounded-2xl cursor-pointer my-0.5 relative group select-none ${
                   isActive
-                    ? 'bg-[#2b5278] text-white shadow-sm'
-                    : 'hover:bg-[var(--tg-surface-hover)] text-[var(--tg-text)]'
-                } ${isHighlighted ? 'animate-chat-updated ring-1 ring-[#5288c1]/60' : ''}`}
+                    ? 'bg-[#2b5278] text-white shadow-sm transition-none'
+                    : 'hover:bg-[var(--tg-surface-hover)] text-[var(--tg-text)] transition-colors duration-150'
+                } ${isHighlighted && !isActive ? 'animate-chat-updated ring-1 ring-[#5288c1]/60' : ''}`}
               >
                 {/* Chat Avatar */}
                 <div className="relative flex-shrink-0">

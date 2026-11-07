@@ -1140,7 +1140,7 @@ app.put('/api/chats/:chatId/archive', (req, res) => {
 });
 
 // Save Chat Draft (private to author, do not emit over socket)
-app.put('/api/chats/:chatId/draft', (req, res) => {
+const handleSaveChatDraft = (req, res) => {
   const { chatId } = req.params;
   const { draft } = req.body;
   const chat = db.chats.find(c => c.id === chatId);
@@ -1148,7 +1148,9 @@ app.put('/api/chats/:chatId/draft', (req, res) => {
   chat.draft = draft || null;
   saveData(db);
   res.json(chat);
-});
+};
+app.put('/api/chats/:chatId/draft', handleSaveChatDraft);
+app.post('/api/chats/:chatId/draft', handleSaveChatDraft);
 
 // Transcribe Voice Message
 app.post('/api/messages/:id/transcribe', (req, res) => {

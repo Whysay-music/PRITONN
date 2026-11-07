@@ -216,7 +216,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <aside className="w-[320px] lg:w-[350px] h-full bg-[var(--tg-sidebar)] border-r border-[var(--tg-border)] flex flex-col flex-shrink-0 select-none relative z-30">
+    <aside className="w-full md:w-[320px] lg:w-[350px] h-full bg-[var(--tg-sidebar)] md:border-r border-[var(--tg-border)] flex flex-col flex-shrink-0 select-none relative z-30">
       {/* Top Header: Telegram Desktop Hamburger Menu + Search Bar */}
       <div className="p-2.5 pb-2 flex items-center gap-2">
         {/* Telegram 3-line Hamburger Button (exact replica of Telegram Desktop) */}

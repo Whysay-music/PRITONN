@@ -50,26 +50,28 @@ jobs:
 
       - name: Rename APK
         run: |
-          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.8.5.apk
+          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.8.6.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: PRITONN-Android-APK
-          path: PRITONN_v5.8.5.apk
+          path: PRITONN_v5.8.6.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/heads/main')
         with:
-          tag_name: v5.8.5
-          name: PRITONN v5.8.5 (Railway Cloud Edition)
+          tag_name: v5.8.6
+          name: PRITONN v5.8.6 (Mobile Responsive & Video Calls)
           body: |
-            ## 🟣 PRITONN Messenger & Social Platform v5.8.5
+            ## 🟣 PRITONN Messenger & Social Platform v5.8.6
             
-            - 🌐 **Постоянный хост**: Подключен официальный сервер на Railway (`https://pritonn-production.up.railway.app`).
-            - 📱 **PRITONN_v5.8.5.apk**: Нативное Android-приложение, работает 24/7 без локального ПК.
-            - 🖥️ **Windows Desktop**: Доступен установщик и портативная версия.
-          files: PRITONN_v5.8.5.apk
+            ### Что нового в версии 5.8.6:
+            - 📱 **Мобильный интерфейс**: На телефонах Android чаты открываются на весь экран, десктопные панели скрыты, добавлена кнопка возврата «Назад» к списку чатов.
+            - 📹 **Видеокамера в звонках**: Полноценный WebRTC видеостриминг — теперь собеседники реально видят трансляцию с камеры друг друга с поддержкой PiP (картинка в картинке).
+            - 🖥️ **Демонстрация экрана на ПК**: Включена системная поддержка трансляции экрана в приложении для Windows (Electron `desktopCapturer`). Собеседники на телефонах могут смотреть демонстрацию экрана в реальном времени.
+            - 🌐 **Постоянный облачный сервер**: Интеграция с хостом Railway (`https://pritonn-production.up.railway.app`).
+          files: PRITONN_v5.8.6.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

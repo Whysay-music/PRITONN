@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain } = require('electron');
+const { app, BrowserWindow, session, ipcMain, desktopCapturer } = require('electron');
 const path = require('path');
 
 let mainWindow = null;
@@ -33,11 +33,27 @@ function createWindow() {
       'pointerLock',
       'fullscreen',
       'openExternal',
+      'display-capture',
     ];
     if (allowedPermissions.includes(permission)) {
       return callback(true);
     }
     callback(false);
+  });
+
+  // Enable getDisplayMedia for Electron screen capture
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+      if (sources && sources.length > 0) {
+        // Automatically select the primary screen or first active window
+        callback({ video: sources[0] });
+      } else {
+        callback(null);
+      }
+    }).catch((err) => {
+      console.warn('Failed to capture desktop sources:', err);
+      callback(null);
+    });
   });
 
   // Check if Vite Dev Server is running or if running packaged

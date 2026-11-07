@@ -367,7 +367,8 @@ export const App: React.FC = () => {
       setChats(chs);
       setStories(sts);
 
-      if (chs.length > 0 && !activeChat) {
+      const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+      if (chs.length > 0 && !activeChat && !isMobile) {
         selectChat(chs[0], user.id);
       } else if (chs.length === 0) {
         setActiveChat(null);
@@ -932,89 +933,98 @@ export const App: React.FC = () => {
   return (
     <div className="w-screen h-screen flex flex-col overflow-hidden bg-[var(--tg-bg)] text-[var(--tg-text)] font-sans antialiased">
       {/* Desktop Window Title Bar */}
-      <DesktopTitleBar activeChat={activeChat} currentUser={currentUser} allUsers={allUsers} />
+      <div className="hidden md:block">
+        <DesktopTitleBar activeChat={activeChat} currentUser={currentUser} allUsers={allUsers} />
+      </div>
 
       {/* Main Workspace: Left Folders Bar + Chat List Sidebar + Main Chat Area + Right Drawer */}
       <div className="flex-1 flex overflow-hidden relative w-full h-full min-w-0">
-        <DesktopFoldersBar
-          activeTab={activeTab}
-          chats={chats}
-          currentUser={currentUser}
-          onSelectTab={(tab) => setActiveTab(tab)}
-          onOpenSavedMessages={handleOpenSavedMessages}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          onOpenNewChatModal={() => setIsNewChatOpen(true)}
-          onOpenCustomFolders={() => setIsFoldersModalOpen(true)}
-          onOpenMiniApp={() => setIsMiniAppOpen(true)}
-          onOpenMenu={() => setIsMainMenuOpen((prev) => !prev)}
-        />
+        <div className="hidden md:flex flex-shrink-0">
+          <DesktopFoldersBar
+            activeTab={activeTab}
+            chats={chats}
+            currentUser={currentUser}
+            onSelectTab={(tab) => setActiveTab(tab)}
+            onOpenSavedMessages={handleOpenSavedMessages}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onOpenNewChatModal={() => setIsNewChatOpen(true)}
+            onOpenCustomFolders={() => setIsFoldersModalOpen(true)}
+            onOpenMiniApp={() => setIsMiniAppOpen(true)}
+            onOpenMenu={() => setIsMainMenuOpen((prev) => !prev)}
+          />
+        </div>
 
-        <Sidebar
-          chats={chats}
-          activeChat={activeChat}
-          currentUser={currentUser}
-          allUsers={allUsers}
-          stories={stories}
-          isDark={isDark}
-          activeTab={activeTab}
-          isMenuOpen={isMainMenuOpen}
-          onToggleMenu={() => setIsMainMenuOpen((prev) => !prev)}
-          onCloseMenu={() => setIsMainMenuOpen(false)}
-          onSelectTab={(tab) => setActiveTab(tab)}
-          onSelectChat={(c) => selectChat(c)}
-          onStartDirectChat={handleStartDirectChat}
-          onOpenSavedMessages={handleOpenSavedMessages}
-          onOpenNewChatModal={() => setIsNewChatOpen(true)}
-          onOpenSettingsModal={() => setIsSettingsOpen(true)}
-          onOpenCalls={() => setIsCallHistoryOpen(true)}
-          onOpenCustomFolders={() => setIsFoldersModalOpen(true)}
-          onOpenMiniApp={() => setIsMiniAppOpen(true)}
-          onTogglePinChat={handleTogglePinChat}
-          onToggleArchiveChat={handleToggleArchiveChat}
-          onToggleTheme={() => setIsDark(!isDark)}
-          onLogout={handleLogout}
-          onSelectStory={(s) => setActiveStory(s)}
-          onCreateStory={() => setIsCreateStoryOpen(true)}
-          onRequestDeleteChat={(c) => setChatToDelete(c)}
-        />
+        <div className={`h-full ${activeChat ? 'hidden md:flex' : 'flex w-full'} md:w-[320px] lg:w-[350px] flex-shrink-0`}>
+          <Sidebar
+            chats={chats}
+            activeChat={activeChat}
+            currentUser={currentUser}
+            allUsers={allUsers}
+            stories={stories}
+            isDark={isDark}
+            activeTab={activeTab}
+            isMenuOpen={isMainMenuOpen}
+            onToggleMenu={() => setIsMainMenuOpen((prev) => !prev)}
+            onCloseMenu={() => setIsMainMenuOpen(false)}
+            onSelectTab={(tab) => setActiveTab(tab)}
+            onSelectChat={(c) => selectChat(c)}
+            onStartDirectChat={handleStartDirectChat}
+            onOpenSavedMessages={handleOpenSavedMessages}
+            onOpenNewChatModal={() => setIsNewChatOpen(true)}
+            onOpenSettingsModal={() => setIsSettingsOpen(true)}
+            onOpenCalls={() => setIsCallHistoryOpen(true)}
+            onOpenCustomFolders={() => setIsFoldersModalOpen(true)}
+            onOpenMiniApp={() => setIsMiniAppOpen(true)}
+            onTogglePinChat={handleTogglePinChat}
+            onToggleArchiveChat={handleToggleArchiveChat}
+            onToggleTheme={() => setIsDark(!isDark)}
+            onLogout={handleLogout}
+            onSelectStory={(s) => setActiveStory(s)}
+            onCreateStory={() => setIsCreateStoryOpen(true)}
+            onRequestDeleteChat={(c) => setChatToDelete(c)}
+          />
+        </div>
 
         {/* Main Chat Area */}
-        <ChatArea
-          chat={activeChat}
-          chats={chats}
-          messages={messages}
-          currentUser={currentUser}
-          allUsers={allUsers}
-          socket={socketRef.current}
-          isTyping={isTyping}
-          onSendMessage={handleSendMessage}
-          onEditMessage={handleEditMessage}
-          onVotePoll={handleVotePoll}
-          onForwardMessage={handleForwardMessage}
-          onReactMessage={handleReactMessage}
-          onPinMessage={handlePinMessage}
-          onDeleteMessage={(msg) => setMessageToDelete(msg)}
-          onToggleInfoDrawer={() => setIsInfoDrawerOpen(!isInfoDrawerOpen)}
-          onStartVoiceCall={() => {
-            if (activeChat) {
-              setCallChat(activeChat);
-              setCallTargetUser(activeChat.targetUser || null);
-            }
-            setIsIncomingAccepted(false);
-            setIsVoiceCallOpen(true);
-          }}
-          onOpenInviteModal={() => setIsInviteModalOpen(true)}
-          onOpenEditChatModal={(c) => setChatToEdit(c)}
-          isBlocked={isTargetBlocked}
-          onToggleBlockUser={handleToggleBlockUser}
-          onRequestDeleteChat={(c) => setChatToDelete(c)}
-          onBurnMessage={handleBurnMessage}
-          onOpenMiniApp={() => setIsMiniAppOpen(true)}
-          onOpenPremium={() => setIsSettingsOpen(true)}
-          onSaveDraft={handleSaveDraft}
-          onTriggerFullscreenEmoji={(em) => setActiveFullscreenEmoji(em)}
-          onTranscribeVoice={handleTranscribeVoice}
-        />
+        <div className={`h-full flex-1 min-w-0 ${activeChat ? 'flex w-full' : 'hidden md:flex'}`}>
+          <ChatArea
+            chat={activeChat}
+            chats={chats}
+            messages={messages}
+            currentUser={currentUser}
+            allUsers={allUsers}
+            socket={socketRef.current}
+            isTyping={isTyping}
+            onSendMessage={handleSendMessage}
+            onEditMessage={handleEditMessage}
+            onVotePoll={handleVotePoll}
+            onForwardMessage={handleForwardMessage}
+            onReactMessage={handleReactMessage}
+            onPinMessage={handlePinMessage}
+            onDeleteMessage={(msg) => setMessageToDelete(msg)}
+            onToggleInfoDrawer={() => setIsInfoDrawerOpen(!isInfoDrawerOpen)}
+            onBack={() => setActiveChat(null)}
+            onStartVoiceCall={() => {
+              if (activeChat) {
+                setCallChat(activeChat);
+                setCallTargetUser(activeChat.targetUser || null);
+              }
+              setIsIncomingAccepted(false);
+              setIsVoiceCallOpen(true);
+            }}
+            onOpenInviteModal={() => setIsInviteModalOpen(true)}
+            onOpenEditChatModal={(c) => setChatToEdit(c)}
+            isBlocked={isTargetBlocked}
+            onToggleBlockUser={handleToggleBlockUser}
+            onRequestDeleteChat={(c) => setChatToDelete(c)}
+            onBurnMessage={handleBurnMessage}
+            onOpenMiniApp={() => setIsMiniAppOpen(true)}
+            onOpenPremium={() => setIsSettingsOpen(true)}
+            onSaveDraft={handleSaveDraft}
+            onTriggerFullscreenEmoji={(em) => setActiveFullscreenEmoji(em)}
+            onTranscribeVoice={handleTranscribeVoice}
+          />
+        </div>
 
         {/* Right Drawer: Chat & Channel Info */}
         <ChatInfoDrawer

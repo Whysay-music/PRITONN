@@ -1522,6 +1522,18 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Camera Video Signaling
+  socket.on('call_camera_status', ({ callerId, callerName, targetUserId, isVideo }) => {
+    if (targetUserId) {
+      const targetSockets = userSockets.get(targetUserId);
+      if (targetSockets) {
+        targetSockets.forEach((sId) => {
+          io.to(sId).emit('call_camera_status', { callerId, callerName, isVideo });
+        });
+      }
+    }
+  });
+
   // Screen Sharing Signaling
   socket.on('call_screen_share', ({ callerId, callerName, targetUserId, isSharing }) => {
     if (targetUserId) {

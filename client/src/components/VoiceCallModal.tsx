@@ -52,6 +52,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
+  const [isRemoteCameraActive, setIsRemoteCameraActive] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isRemoteScreenSharing, setIsRemoteScreenSharing] = useState(false);
   const [isViewingRemoteScreen, setIsViewingRemoteScreen] = useState(false);
@@ -259,10 +260,10 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
           remoteVideoRef.current.srcObject = stream;
           remoteVideoRef.current.play().catch(() => {});
         }
-        setIsRemoteScreenSharing(true);
-        // Do not force isViewingRemoteScreen on call start: user can click "Смотреть" or start own share
+        setIsRemoteCameraActive(true);
 
         event.track.onended = () => {
+          setIsRemoteCameraActive(false);
           setIsRemoteScreenSharing(false);
           setIsViewingRemoteScreen(false);
           setIsRemoteVideoPlaying(false);
@@ -415,6 +416,18 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         stopRingtone();
         const pc = initPeerConnection();
         try {
+          if (localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach((track) => {
+              const senders = pc.getSenders();
+              const existingSender = senders.find((s) => s.track && s.track.id === track.id);
+              if (!existingSender) {
+                try {
+                  pc.addTrack(track, localStreamRef.current!);
+                } catch {}
+              }
+            });
+          }
+
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
           // Flush queued candidates
@@ -517,10 +530,21 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         onClose();
       };
 
+      const handleCameraStatus = ({
+        isVideo,
+      }: {
+        callerId: string;
+        callerName?: string;
+        isVideo: boolean;
+      }) => {
+        setIsRemoteCameraActive(isVideo);
+      };
+
       socket.on('call_accepted', handleAccepted);
       socket.on('webrtc_offer', handleOffer);
       socket.on('webrtc_answer', handleAnswer);
       socket.on('webrtc_ice_candidate', handleIceCandidate);
+      socket.on('call_camera_status', handleCameraStatus);
       socket.on('call_screen_share_status', handleScreenShareStatus);
       socket.on('screen_stream_frame', handleScreenStreamFrame);
       socket.on('call_rejected', handleRejected);
@@ -533,6 +557,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         socket.off('webrtc_offer', handleOffer);
         socket.off('webrtc_answer', handleAnswer);
         socket.off('webrtc_ice_candidate', handleIceCandidate);
+        socket.off('call_camera_status', handleCameraStatus);
         socket.off('call_screen_share_status', handleScreenShareStatus);
         socket.off('screen_stream_frame', handleScreenStreamFrame);
         socket.off('call_rejected', handleRejected);
@@ -620,10 +645,131 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     }
   }, [isVideoEnabled, socket, targetUserId, currentUser]);
 
+  // Camera Video toggle with real WebRTC track streaming & renegotiation
+  const handleToggleCamera = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const nextVideoState = !isVideoEnabled;
+    setIsVideoEnabled(nextVideoState);
+
+    if (nextVideoState) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'user',
+            width: { ideal: 1280, max: 1920 },
+            height: { ideal: 720, max: 1080 },
+          },
+        });
+
+        const newVideoTrack = stream.getVideoTracks()[0];
+        if (!newVideoTrack) return;
+
+        if (localStreamRef.current) {
+          const oldVideoTracks = localStreamRef.current.getVideoTracks();
+          oldVideoTracks.forEach((t) => {
+            t.stop();
+            localStreamRef.current?.removeTrack(t);
+          });
+          localStreamRef.current.addTrack(newVideoTrack);
+        } else {
+          localStreamRef.current = stream;
+        }
+
+        if (localVideoRef.current && !isScreenSharing) {
+          localVideoRef.current.srcObject = localStreamRef.current;
+          localVideoRef.current.play().catch(() => {});
+        }
+
+        const pc = initPeerConnection();
+        const senders = pc.getSenders();
+        const videoSender =
+          senders.find((s) => s.track && s.track.kind === 'video') ||
+          senders.find((s) => !s.track);
+        if (videoSender) {
+          await videoSender.replaceTrack(newVideoTrack).catch(() => {});
+        } else {
+          try {
+            pc.addTrack(newVideoTrack, localStreamRef.current || stream);
+          } catch {}
+        }
+
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          if (socket && targetUserId) {
+            socket.emit('webrtc_offer', {
+              targetUserId,
+              sdp: offer,
+            });
+          }
+        } catch (err) {
+          console.warn('Renegotiation offer error on camera toggle:', err);
+        }
+
+        if (socket && targetUserId && currentUser) {
+          socket.emit('call_camera_status', {
+            callerId: currentUser.id,
+            callerName: currentUser.name,
+            targetUserId,
+            isVideo: true,
+          });
+        }
+      } catch (err: any) {
+        console.warn('Camera permission or error:', err);
+        setIsVideoEnabled(false);
+        alert(
+          'Не удалось получить доступ к видеокамере. Проверьте разрешения в настройках вашего устройства.'
+        );
+      }
+    } else {
+      if (localStreamRef.current) {
+        localStreamRef.current.getVideoTracks().forEach((t) => {
+          t.stop();
+          localStreamRef.current?.removeTrack(t);
+        });
+      }
+
+      if (peerConnectionRef.current) {
+        const senders = peerConnectionRef.current.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === 'video');
+        if (videoSender) {
+          await videoSender.replaceTrack(null).catch(() => {});
+        }
+
+        try {
+          const offer = await peerConnectionRef.current.createOffer();
+          await peerConnectionRef.current.setLocalDescription(offer);
+          if (socket && targetUserId) {
+            socket.emit('webrtc_offer', {
+              targetUserId,
+              sdp: offer,
+            });
+          }
+        } catch {}
+      }
+
+      if (socket && targetUserId && currentUser) {
+        socket.emit('call_camera_status', {
+          callerId: currentUser.id,
+          callerName: currentUser.name,
+          targetUserId,
+          isVideo: false,
+        });
+      }
+    }
+  };
+
   // Start Screen Share with renegotiation & ultra-fast canvas frame streaming
   const handleToggleScreenShare = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!isScreenSharing) {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        alert(
+          'Демонстрация экрана доступна на ПК (Windows / Web). На смартфонах Android можно просматривать трансляцию собеседника.'
+        );
+        return;
+      }
+
       try {
         const screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: {
@@ -732,8 +878,17 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             stopScreenSharing();
           };
         }
-      } catch (err) {
+      } catch (err: any) {
         console.warn('Screen share canceled or error:', err);
+        if (
+          err?.name === 'NotSupportedError' ||
+          err?.message?.includes('not supported') ||
+          err?.message?.includes('not implemented')
+        ) {
+          alert(
+            'Демонстрация экрана доступна на ПК (Windows / Web). На мобильном устройстве вы можете смотреть трансляцию собеседника.'
+          );
+        }
       }
     } else {
       stopScreenSharing();
@@ -804,7 +959,10 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       ? 'local'
       : 'remote';
 
-  const isTheaterActive = isScreenSharing || (isRemoteScreenSharing && isViewingRemoteScreen);
+  const isScreenSharingActive =
+    isScreenSharing || (isRemoteScreenSharing && isViewingRemoteScreen);
+  const isCameraVideoActive = isVideoEnabled || isRemoteCameraActive;
+  const isTheaterActive = isScreenSharingActive || isCameraVideoActive;
 
   // --- FLOATING MINIMIZED CALL WIDGET (Telegram Dynamic Island) ---
   if (isMinimized) {
@@ -840,6 +998,12 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                 <span className="flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-[#2481cc]/25 text-[#5288c1] text-[10px] font-semibold border border-[#2481cc]/30">
                   <Tv size={10} />
                   <span>Экран</span>
+                </span>
+              )}
+              {(isVideoEnabled || isRemoteCameraActive) && !(isScreenSharing || isRemoteScreenSharing) && (
+                <span className="flex items-center gap-1 px-1.5 py-0.2 rounded-full bg-emerald-500/25 text-emerald-400 text-[10px] font-semibold border border-emerald-500/30">
+                  <Video size={10} />
+                  <span>Видео</span>
                 </span>
               )}
             </div>
@@ -934,15 +1098,17 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                   onClick={() => {
                     if (isScreenSharing) {
                       stopScreenSharing();
-                    } else {
+                    } else if (isViewingRemoteScreen) {
                       setIsViewingRemoteScreen(false);
+                    } else if (isVideoEnabled) {
+                      handleToggleCamera();
                     }
                   }}
                   className="px-2.5 py-1.5 rounded-lg bg-[#242f3d] hover:bg-[#2c394a] text-[#7f91a4] hover:text-white transition cursor-pointer flex items-center gap-1 text-xs"
-                  title="Свернуть просмотр в компактный режим звонка"
+                  title="Выключить видео/трансляцию"
                 >
                   <Minimize2 size={14} />
-                  <span className="hidden sm:inline">Свернуть в мини</span>
+                  <span className="hidden sm:inline">Выключить видео</span>
                 </button>
               )}
 
@@ -970,17 +1136,30 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
           </div>
         </div>
 
-        {/* --- THEATER SCREEN SHARE VIEW --- */}
+        {/* --- THEATER SCREEN / CAMERA VIEW --- */}
         {isTheaterActive ? (
           <div className="flex-1 w-full min-h-0 flex flex-col relative my-1">
             <div className="flex items-center justify-between px-3 py-1.5 mb-1.5 rounded-xl bg-black/40 border border-white/5 text-xs">
               <div className="flex items-center gap-2 text-white">
-                <Tv size={16} className="text-[#5288c1]" />
-                <span className="font-semibold text-sm">
-                  {effectiveSelectedCallStream === 'local'
-                    ? 'Ваша демонстрация экрана'
-                    : `Демонстрация экрана: ${remoteScreenSenderName || targetName}`}
-                </span>
+                {isScreenSharingActive ? (
+                  <>
+                    <Tv size={16} className="text-[#5288c1]" />
+                    <span className="font-semibold text-sm">
+                      {effectiveSelectedCallStream === 'local'
+                        ? 'Ваша демонстрация экрана'
+                        : `Демонстрация экрана: ${remoteScreenSenderName || targetName}`}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Video size={16} className="text-emerald-400" />
+                    <span className="font-semibold text-sm">
+                      {isRemoteCameraActive
+                        ? `Видеозвонок: ${targetName}`
+                        : 'Видеозвонок (Ваша камера)'}
+                    </span>
+                  </>
+                )}
                 <span className="text-[11px] text-emerald-400 font-mono tracking-wider ml-2">
                   {formatTime(seconds)}
                 </span>
@@ -1036,45 +1215,89 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             )}
 
             <div className="flex-1 w-full relative min-h-0 bg-black rounded-2xl border border-white/10 flex items-center justify-center shadow-inner overflow-hidden">
-              {effectiveSelectedCallStream === 'local' ? (
-                <video
-                  ref={setLocalVideo}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-contain"
-                />
-              ) : (
+              {isScreenSharingActive ? (
+                effectiveSelectedCallStream === 'local' ? (
+                  <video
+                    ref={setLocalVideo}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <div className="relative w-full h-full flex items-center justify-center bg-black">
+                    {/* WebRTC Video Stream */}
+                    <video
+                      ref={setRemoteVideo}
+                      autoPlay
+                      playsInline
+                      onPlaying={() => setIsRemoteVideoPlaying(true)}
+                      className={`w-full h-full object-contain ${isRemoteVideoPlaying ? 'block' : 'hidden'}`}
+                    />
+
+                    {/* High-speed Real-time Frame Stream (Zero black screen guarantee) */}
+                    {(!isRemoteVideoPlaying || !remoteVideoStreamRef.current) && remoteFrameDataUrl && (
+                      <img
+                        src={remoteFrameDataUrl}
+                        alt="Прямая трансляция экрана"
+                        className="w-full h-full object-contain select-none pointer-events-none"
+                      />
+                    )}
+
+                    {/* Animated Loader while connecting */}
+                    {!isRemoteVideoPlaying && !remoteFrameDataUrl && (
+                      <div className="flex flex-col items-center justify-center gap-3 text-[#7f91a4]">
+                        <div className="w-9 h-9 border-3 border-[#5288c1] border-t-transparent rounded-full animate-spin" />
+                        <span className="text-xs font-medium">Подключение к трансляции экрана...</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              ) : isRemoteCameraActive ? (
+                /* Remote Camera Active */
                 <div className="relative w-full h-full flex items-center justify-center bg-black">
-                  {/* WebRTC Video Stream */}
                   <video
                     ref={setRemoteVideo}
                     autoPlay
                     playsInline
-                    onPlaying={() => setIsRemoteVideoPlaying(true)}
-                    className={`w-full h-full object-contain ${isRemoteVideoPlaying ? 'block' : 'hidden'}`}
+                    className="w-full h-full object-contain"
                   />
-
-                  {/* High-speed Real-time Frame Stream (Zero black screen guarantee) */}
-                  {(!isRemoteVideoPlaying || !remoteVideoStreamRef.current) && remoteFrameDataUrl && (
-                    <img
-                      src={remoteFrameDataUrl}
-                      alt="Прямая трансляция экрана"
-                      className="w-full h-full object-contain select-none pointer-events-none"
-                    />
-                  )}
-
-                  {/* Animated Loader while connecting */}
-                  {!isRemoteVideoPlaying && !remoteFrameDataUrl && (
-                    <div className="flex flex-col items-center justify-center gap-3 text-[#7f91a4]">
-                      <div className="w-9 h-9 border-3 border-[#5288c1] border-t-transparent rounded-full animate-spin" />
-                      <span className="text-xs font-medium">Подключение к трансляции экрана...</span>
-                    </div>
-                  )}
+                </div>
+              ) : (
+                /* Waiting for remote peer's camera */
+                <div className="relative w-full h-full flex flex-col items-center justify-center bg-[#0e1621]">
+                  <img
+                    src={targetAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
+                    alt={targetName}
+                    className="w-24 h-24 rounded-full object-cover border-4 border-[#242f3d] mb-3 shadow-xl"
+                  />
+                  <h3 className="font-bold text-base text-white mb-1">{targetName}</h3>
+                  <span className="text-xs text-[#7f91a4] mb-3">Камера собеседника выключена</span>
+                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-medium border border-emerald-500/30">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Ваша камера включена и транслирует видео
+                  </div>
                 </div>
               )}
 
-              <div className="absolute top-4 right-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-2 shadow-lg">
+              {/* Picture-in-Picture floating preview for local camera */}
+              {isVideoEnabled && (
+                <div className="absolute bottom-4 right-4 w-28 h-40 sm:w-40 sm:h-56 rounded-2xl overflow-hidden border-2 border-[#5288c1] shadow-2xl bg-black z-30">
+                  <video
+                    ref={setLocalVideo}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded-full text-[10px] text-white flex items-center gap-1">
+                    <Video size={10} className="text-emerald-400" />
+                    <span>Вы</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="absolute top-4 right-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-2 shadow-lg z-20">
                 <img
                   src={targetAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}
                   alt={targetName}
@@ -1087,7 +1310,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             </div>
           </div>
         ) : (
-          /* --- COMPACT CALL VIEW --- */
+          /* --- COMPACT CALL VIEW (Pure Audio) --- */
           <div className="flex flex-col items-center w-full">
             {isRemoteScreenSharing && (
               <div className="w-full mb-4 p-3 bg-gradient-to-r from-[#2481cc]/25 to-emerald-500/20 border border-[#5288c1]/40 rounded-2xl flex items-center justify-between animate-pulse">
@@ -1113,41 +1336,25 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
               </div>
             )}
 
-            {isVideoEnabled ? (
-              <div className="relative w-52 h-52 rounded-2xl overflow-hidden mb-5 border-2 border-[#5288c1] shadow-xl bg-black">
-                <video
-                  ref={setLocalVideo}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded-full text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                  Камера
-                </div>
-              </div>
-            ) : (
-              <div className="relative mb-5">
-                <div
-                  className={`absolute -inset-2 rounded-full bg-[#5288c1]/20 transition-all ${
-                    status === 'calling'
-                      ? 'animate-ping'
-                      : status === 'connecting'
-                      ? 'animate-pulse'
-                      : 'animate-spin-slow'
-                  }`}
-                />
-                <img
-                  src={
-                    targetAvatar ||
-                    'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'
-                  }
-                  alt={targetName}
-                  className="w-28 h-28 rounded-full object-cover border-4 border-[#242f3d] relative z-10 shadow-xl"
-                />
-              </div>
-            )}
+            <div className="relative mb-5">
+              <div
+                className={`absolute -inset-2 rounded-full bg-[#5288c1]/20 transition-all ${
+                  status === 'calling'
+                    ? 'animate-ping'
+                    : status === 'connecting'
+                    ? 'animate-pulse'
+                    : 'animate-spin-slow'
+                }`}
+              />
+              <img
+                src={
+                  targetAvatar ||
+                  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'
+                }
+                alt={targetName}
+                className="w-28 h-28 rounded-full object-cover border-4 border-[#242f3d] relative z-10 shadow-xl"
+              />
+            </div>
 
             <h3 className="font-bold text-lg text-center flex items-center justify-center gap-1.5 mb-1">
               <span className="truncate">{targetName}</span>
@@ -1222,7 +1429,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
           <button
             type="button"
-            onClick={() => setIsVideoEnabled(!isVideoEnabled)}
+            onClick={(e) => handleToggleCamera(e)}
             className={`p-3 rounded-full transition shadow-md cursor-pointer ${
               isVideoEnabled
                 ? 'bg-[#5288c1] text-white'

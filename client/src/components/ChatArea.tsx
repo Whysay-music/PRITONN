@@ -44,6 +44,7 @@ import {
   Timer,
   EyeOff,
   Bot,
+  ArrowLeft,
 } from 'lucide-react';
 import { Chat, Message, User, ReplyInfo, InlineKeyboardButton } from '../types';
 import { VoiceMessagePlayer } from './VoiceMessagePlayer';
@@ -109,6 +110,7 @@ interface ChatAreaProps {
   onSaveDraft?: (chatId: string, text: string) => void;
   onTriggerFullscreenEmoji?: (emoji: string) => void;
   onTranscribeVoice?: (messageId: string) => void;
+  onBack?: () => void;
 }
 
 const AUTHOR_COLORS = [
@@ -158,6 +160,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   onSaveDraft,
   onTriggerFullscreenEmoji,
   onTranscribeVoice,
+  onBack,
 }) => {
   const [inputText, setInputText] = useState('');
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
@@ -511,6 +514,20 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     <div key={chat.id} className="flex-1 min-w-0 h-full flex flex-col tg-chat-pattern relative overflow-hidden select-none animate-chat-enter">
       {/* Header */}
       <header className="h-14 bg-[var(--tg-sidebar)] border-b border-[var(--tg-border)] px-4 flex items-center justify-between z-20 flex-shrink-0 shadow-sm">
+        {onBack && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onBack();
+            }}
+            className="md:hidden mr-2 p-1.5 -ml-1 text-[var(--tg-text-muted)] hover:text-[var(--tg-text)] rounded-full hover:bg-[var(--tg-surface-hover)] transition flex-shrink-0 cursor-pointer"
+            title="Назад к списку чатов"
+            aria-label="Назад к списку чатов"
+          >
+            <ArrowLeft size={22} />
+          </button>
+        )}
         <div
           onClick={onToggleInfoDrawer}
           className="flex items-center gap-3 cursor-pointer group flex-1 min-w-0"

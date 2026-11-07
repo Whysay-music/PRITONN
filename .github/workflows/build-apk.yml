@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Android APK
@@ -14,10 +17,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
 
@@ -64,8 +67,7 @@ jobs:
           body: |
             ## 🟣 PRITONN Messenger & Social Platform v5.8.3
             
-            - 📱 **PRITONN_v5.8.3.apk**: Установщик для Android (любые смартфоны и планшеты).
-            - 🖥️ **Windows .exe**: Доступен в репозитории в разделе релизов.
+            - 📱 **PRITONN_v5.8.3.apk**: Установщик для Android (смартфоны и планшеты).
           files: PRITONN_v5.8.3.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

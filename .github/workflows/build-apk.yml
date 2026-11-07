@@ -3,6 +3,9 @@ name: Build PRITONN Android APK
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'server/**'
+      - '.github/**'
   workflow_dispatch:
 
 permissions:

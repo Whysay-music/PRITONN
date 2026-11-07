@@ -13,7 +13,6 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import ffmpegPath from 'ffmpeg-static';
 import pkgWavefile from 'wavefile';
-import { pipeline, env as hfEnv } from '@huggingface/transformers';
 
 const { WaveFile } = pkgWavefile;
 
@@ -43,9 +42,6 @@ const SNAPSHOT_KEY = crypto
   .createHash('sha256')
   .update(process.env.DB_SYNC_SECRET || 'pritonn-v5-persistent-cloud-vault-2026')
   .digest();
-
-hfEnv.allowLocalModels = false;
-hfEnv.cacheDir = VOLUME_DIR ? path.join(VOLUME_DIR, '.hf-cache') : path.join(__dirname, '.hf-cache');
 
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -1760,30 +1756,75 @@ const handleSaveChatDraft = (req, res) => {
 app.put('/api/chats/:chatId/draft', handleSaveChatDraft);
 app.post('/api/chats/:chatId/draft', handleSaveChatDraft);
 
-// --- SERVER-SIDE WHISPER-SMALL SPEECH-TO-TEXT ENGINE (Russian ASR) ---
-let serverWhisperPromise = null;
+// --- ZERO-OOM SERVER-SIDE WHISPER LARGE-V3 SPEECH-TO-TEXT ENGINE (Russian ASR) ---
+const WHISPER_GPU_ENDPOINTS = [
+  { base: 'https://hf-audio-whisper-large-v3.hf.space', endpoint: '/transcribe' },
+  { base: 'https://openai-whisper.hf.space', endpoint: '/predict' },
+];
 
-function getServerWhisperPipeline() {
-  if (!serverWhisperPromise) {
-    serverWhisperPromise = (async () => {
-      try {
-        return await pipeline('automatic-speech-recognition', 'Xenova/whisper-small', {
-          dtype: 'q8',
-        });
-      } catch (firstErr) {
-        console.warn('[ASR] Primary HuggingFace download failed, retrying via hf-mirror.com:', firstErr?.message || firstErr);
-        hfEnv.remoteHost = 'https://hf-mirror.com/';
-        return await pipeline('automatic-speech-recognition', 'Xenova/whisper-small', {
-          dtype: 'q8',
-        });
-      }
-    })().catch((err) => {
-      console.error('[ASR] Failed to initialize Xenova/whisper-small:', err);
-      serverWhisperPromise = null;
-      throw err;
+async function callWhisperGradioGpu(wavBuffer, base, endpoint) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 22000);
+  try {
+    const fd = new FormData();
+    fd.append('files', new Blob([wavBuffer], { type: 'audio/wav' }), 'voice.wav');
+
+    const upRes = await fetch(`${base}/gradio_api/upload`, {
+      method: 'POST',
+      body: fd,
+      signal: controller.signal,
     });
+    if (!upRes.ok) {
+      throw new Error(`Upload ${upRes.status}`);
+    }
+    const uploaded = await upRes.json();
+    const remotePath = Array.isArray(uploaded) ? uploaded[0] : null;
+    if (!remotePath) {
+      throw new Error('Empty Gradio upload path');
+    }
+
+    const callRes = await fetch(`${base}/gradio_api/call${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: [{ path: remotePath, meta: { _type: 'gradio.FileData' } }, 'transcribe'],
+      }),
+      signal: controller.signal,
+    });
+    if (!callRes.ok) {
+      throw new Error(`Call ${callRes.status}`);
+    }
+    const { event_id } = await callRes.json();
+    if (!event_id) {
+      throw new Error('Missing event_id');
+    }
+
+    const sseRes = await fetch(`${base}/gradio_api/call${endpoint}/${event_id}`, {
+      signal: controller.signal,
+    });
+    if (!sseRes.ok) {
+      throw new Error(`SSE ${sseRes.status}`);
+    }
+    const sseText = await sseRes.text();
+    const lines = sseText.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('event: complete')) {
+        const dataLine = lines.slice(i + 1).find((l) => l.startsWith('data:'));
+        if (dataLine) {
+          const parsed = JSON.parse(dataLine.slice(5).trim());
+          if (Array.isArray(parsed) && typeof parsed[0] === 'string') {
+            return parsed[0].trim();
+          }
+        }
+      }
+      if (lines[i].startsWith('event: error')) {
+        throw new Error('Gradio worker returned error');
+      }
+    }
+    throw new Error('No complete event in SSE stream');
+  } finally {
+    clearTimeout(timer);
   }
-  return serverWhisperPromise;
 }
 
 async function resolveAudioBufferForTranscription(mediaUrl) {
@@ -1838,7 +1879,7 @@ async function resolveAudioBufferForTranscription(mediaUrl) {
   throw new Error('Файл голосового сообщения недоступен на сервере');
 }
 
-function decodeAudioBufferTo16kFloat32(audioBuffer, extHint = '.webm') {
+function decodeAudioBufferTo16kWav(audioBuffer, extHint = '.webm') {
   return new Promise((resolve, reject) => {
     if (!ffmpegPath || !fs.existsSync(ffmpegPath)) {
       return reject(new Error('Декодер аудио (ffmpeg) не найден на сервере'));
@@ -1901,7 +1942,7 @@ function decodeAudioBufferTo16kFloat32(audioBuffer, extHint = '.webm') {
         }
         const float32 = samples instanceof Float32Array ? samples : Float32Array.from(samples);
         cleanup();
-        resolve(float32);
+        resolve({ wavBuffer: wavBuf, pcm16k: float32 });
       } catch (parseErr) {
         cleanup();
         reject(parseErr);
@@ -1915,7 +1956,7 @@ async function transcribeMediaOnServer(mediaUrl) {
   if (!buffer || buffer.length < 64) {
     return '[Аудиозапись пуста]';
   }
-  const pcm16k = await decodeAudioBufferTo16kFloat32(buffer, ext);
+  const { wavBuffer, pcm16k } = await decodeAudioBufferTo16kWav(buffer, ext);
   if (!pcm16k || pcm16k.length < 800) {
     return '[Тишина — запись слишком короткая]';
   }
@@ -1929,15 +1970,22 @@ async function transcribeMediaOnServer(mediaUrl) {
     return '[Тишина — речь на записи не обнаружена]';
   }
 
-  const transcriber = await getServerWhisperPipeline();
-  const result = await transcriber(pcm16k, {
-    language: 'russian',
-    task: 'transcribe',
-    chunk_length_s: 30,
-    stride_length_s: 5,
-  });
+  let rawText = '';
+  let lastErr = null;
+  for (const node of WHISPER_GPU_ENDPOINTS) {
+    try {
+      rawText = await callWhisperGradioGpu(wavBuffer, node.base, node.endpoint);
+      if (rawText) break;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[ASR] Failover from ${node.base}:`, err?.message || err);
+    }
+  }
 
-  const rawText = (typeof result === 'string' ? result : result?.text || '').trim();
+  if (!rawText && lastErr) {
+    throw new Error('Сервис распознавания речи временно перегружен, попробуйте через пару секунд');
+  }
+
   const cleaned = rawText
     .replace(/^\s*\[.*?\]\s*$/g, '')
     .replace(/^\s*\(.*?\)\s*$/g, '')
@@ -2691,10 +2739,4 @@ app.get('*', (req, res, next) => {
 
 server.listen(PORT, () => {
   console.log(`Telegram Backend server running on http://localhost:${PORT}`);
-  // Pre-warm Whisper-small speech recognition model in background so first transcription is instant
-  setTimeout(() => {
-    getServerWhisperPipeline()
-      .then(() => console.log('[ASR] Xenova/whisper-small Russian model ready'))
-      .catch(() => {});
-  }, 4000);
 });

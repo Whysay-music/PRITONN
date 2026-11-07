@@ -1,0 +1,29 @@
+# Dependencies (сервер хостинга сам их устанавливает)
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Скомпилированные сборки (хостинг сам собирает их при деплое)
+client/dist/
+client/release/
+
+# Временные файлы Android и Gradle
+client/android/.gradle/
+client/android/app/build/
+client/android/build/
+client/android/local.properties
+
+# Системные и лог файлы
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Вспомогательные локальные утилиты и архивы
+tools/
+PRITONN-SOURCE-CODE/
+PRITONN-GitHub-Ready.zip
+*.zip
+

@@ -1,0 +1,551 @@
+{
+  "users": [
+    {
+      "id": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "name": "Whysay",
+      "username": "Admin",
+      "password": "tixiy228",
+      "phone": "+777777777777",
+      "avatar": "http://localhost:4000/uploads/1793986661494-400834245.jpg",
+      "bio": "Владелец PRITONN",
+      "online": true,
+      "lastSeen": "в сети",
+      "verified": true,
+      "blockedUserIds": [],
+      "lastSeenTimestamp": null,
+      "isPremium": true,
+      "emojiStatus": "",
+      "customFolders": []
+    },
+    {
+      "id": "user_8aebf6a6-64e6-48a3-95eb-0fb35618f32f",
+      "name": "Alice",
+      "username": "alice1",
+      "password": "password123",
+      "phone": "+79991112233",
+      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=alice1",
+      "bio": "Пользователь PRITONN",
+      "online": false,
+      "lastSeen": "был(а) сегодня в 00:54",
+      "verified": false,
+      "lastSeenTimestamp": 1794002091403
+    },
+    {
+      "id": "user_88b9ed40-bf4c-4e0e-a4d6-94249fda2f84",
+      "name": "Bob",
+      "username": "bob1",
+      "password": "password123",
+      "phone": "+79992223344",
+      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=bob1",
+      "bio": "Пользователь PRITONN",
+      "online": false,
+      "lastSeen": "был(а) сегодня в 00:29",
+      "verified": false,
+      "lastSeenTimestamp": 1794000591403
+    },
+    {
+      "id": "user_2d2fc153-6dc2-489a-b5f7-13ec0e6b7f08",
+      "name": "Charlie",
+      "username": "charlie1",
+      "password": "password123",
+      "phone": "+79993334455",
+      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=charlie1",
+      "bio": "Пользователь PRITONN",
+      "online": false,
+      "lastSeen": "был(а) вчера в 23:04",
+      "verified": false,
+      "lastSeenTimestamp": 1793995491403
+    },
+    {
+      "id": "user_bot",
+      "name": "AI Assistant",
+      "username": "ai_assistant",
+      "password": "",
+      "phone": "",
+      "avatar": "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&auto=format&fit=crop&q=80",
+      "bio": "Официальный Бот • PRITONN",
+      "verified": false,
+      "online": true,
+      "lastSeen": "бот",
+      "isBot": true
+    },
+    {
+      "id": "user_bda18047-d324-4c84-8193-186433cb2846",
+      "name": "фывфывф",
+      "username": "фывфывфыв",
+      "password": "222222",
+      "phone": "",
+      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=фывфывфыв",
+      "bio": "Пользователь PRITONN",
+      "verified": false,
+      "online": false,
+      "lastSeen": "был(а) сегодня в 01:24",
+      "lastSeenTimestamp": 1794003899344
+    },
+    {
+      "id": "user_a0543cfe-0df5-417e-8ec6-a4c552cf2cfb",
+      "name": "New Registered User",
+      "username": "testuser_1794002888824",
+      "password": "password123",
+      "phone": "",
+      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=testuser_1794002888824",
+      "bio": "Пользователь PRITONN",
+      "verified": false,
+      "online": false,
+      "lastSeen": "был(а) вчера в 23:40",
+      "lastSeenTimestamp": 1793997606224
+    },
+    {
+      "id": "user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
+      "name": "asdasdsdfsdf",
+      "username": "asdasdas",
+      "password": "dasdasda",
+      "phone": "",
+      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=asdasdas",
+      "bio": "Пользователь PRITONN",
+      "verified": false,
+      "online": false,
+      "lastSeen": "был(а) 53 мин. назад",
+      "lastSeenTimestamp": 1794004574170
+    },
+    {
+      "id": "user_8f146b92-e260-4afa-958b-cccca5f3a6a5",
+      "name": "Тестовый",
+      "username": "testuser_1794003916828",
+      "password": "password123",
+      "phone": "",
+      "avatar": "https://api.dicebear.com/7.x/bottts/svg?seed=testuser_1794003916828",
+      "bio": "Пользователь PRITONN",
+      "verified": false,
+      "online": false,
+      "lastSeen": "был(а) вчера в 23:19",
+      "lastSeenTimestamp": 1793996366872
+    },
+    {
+      "id": "user_1d6be0e8-18b1-49eb-aae8-07471e596880",
+      "name": "proverka",
+      "username": "proverka",
+      "password": "UezfbPaKYDUvq2i",
+      "phone": "",
+      "avatar": "https://api.dicebear.com/7.x/notionists/svg?seed=proverka",
+      "bio": "Пользователь PRITONN",
+      "verified": false,
+      "online": true,
+      "lastSeen": "в сети",
+      "lastSeenTimestamp": null,
+      "isPremium": false,
+      "emojiStatus": "👑"
+    }
+  ],
+  "stories": [],
+  "chats": [
+    {
+      "id": "chat_saved_user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "type": "saved",
+      "name": "Избранное",
+      "avatar": "/telegram-saved.svg",
+      "members": [
+        "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf"
+      ],
+      "pinned": true,
+      "unreadCount": 0
+    },
+    {
+      "id": "chat_saved_user_8aebf6a6-64e6-48a3-95eb-0fb35618f32f",
+      "type": "saved",
+      "name": "Избранное",
+      "avatar": "/telegram-saved.svg",
+      "members": [
+        "user_8aebf6a6-64e6-48a3-95eb-0fb35618f32f"
+      ],
+      "pinned": true,
+      "createdAt": 1794002864980,
+      "unreadCount": 0
+    },
+    {
+      "id": "chat_saved_user_88b9ed40-bf4c-4e0e-a4d6-94249fda2f84",
+      "type": "saved",
+      "name": "Избранное",
+      "avatar": "/telegram-saved.svg",
+      "members": [
+        "user_88b9ed40-bf4c-4e0e-a4d6-94249fda2f84"
+      ],
+      "pinned": true,
+      "createdAt": 1794002864981,
+      "unreadCount": 0
+    },
+    {
+      "id": "chat_saved_user_2d2fc153-6dc2-489a-b5f7-13ec0e6b7f08",
+      "type": "saved",
+      "name": "Избранное",
+      "avatar": "/telegram-saved.svg",
+      "members": [
+        "user_2d2fc153-6dc2-489a-b5f7-13ec0e6b7f08"
+      ],
+      "pinned": true,
+      "createdAt": 1794002864981,
+      "unreadCount": 0
+    },
+    {
+      "id": "chat_saved_user_bda18047-d324-4c84-8193-186433cb2846",
+      "type": "saved",
+      "name": "Избранное",
+      "avatar": "/telegram-saved.svg",
+      "members": [
+        "user_bda18047-d324-4c84-8193-186433cb2846"
+      ],
+      "pinned": true,
+      "createdAt": 1794002864981,
+      "unreadCount": 0
+    },
+    {
+      "id": "chat_saved_user_a0543cfe-0df5-417e-8ec6-a4c552cf2cfb",
+      "type": "saved",
+      "name": "Избранное",
+      "avatar": "/telegram-saved.svg",
+      "members": [
+        "user_a0543cfe-0df5-417e-8ec6-a4c552cf2cfb"
+      ],
+      "pinned": true,
+      "createdAt": 1794002888892,
+      "unreadCount": 0
+    },
+    {
+      "id": "chat_saved_user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
+      "type": "saved",
+      "name": "Избранное",
+      "avatar": "/telegram-saved.svg",
+      "members": [
+        "user_2d5739d9-db3b-4157-9aa0-931fed48c41e"
+      ],
+      "pinned": true,
+      "createdAt": 1794003907311,
+      "unreadCount": 0
+    },
+    {
+      "id": "chat_saved_user_8f146b92-e260-4afa-958b-cccca5f3a6a5",
+      "type": "saved",
+      "name": "Избранное",
+      "avatar": "/telegram-saved.svg",
+      "members": [
+        "user_8f146b92-e260-4afa-958b-cccca5f3a6a5"
+      ],
+      "pinned": true,
+      "createdAt": 1794003916881,
+      "unreadCount": 0
+    },
+    {
+      "id": "chat_dm_f0d99ea1-0661-4396-bbf0-2c622538909a",
+      "type": "direct",
+      "targetUserId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "members": [
+        "user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
+        "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf"
+      ],
+      "createdAt": 1794004487143,
+      "isPinned": false,
+      "draft": null
+    },
+    {
+      "id": "chat_saved_user_1d6be0e8-18b1-49eb-aae8-07471e596880",
+      "type": "saved",
+      "name": "Избранное",
+      "avatar": "/telegram-saved.svg",
+      "members": [
+        "user_1d6be0e8-18b1-49eb-aae8-07471e596880"
+      ],
+      "pinned": true,
+      "createdAt": 1794004597243,
+      "unreadCount": 0
+    },
+    {
+      "id": "chat_dm_720ca4f2-17da-4edd-87f7-587bc3147931",
+      "type": "direct",
+      "targetUserId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "members": [
+        "user_1d6be0e8-18b1-49eb-aae8-07471e596880",
+        "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf"
+      ],
+      "createdAt": 1794004602265,
+      "isPinned": false,
+      "draft": null
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg_a3d7c749-6d85-4ec1-9824-22cfeea41c2b",
+      "chatId": "chat_dm_f0d99ea1-0661-4396-bbf0-2c622538909a",
+      "senderId": "user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
+      "text": "qq",
+      "mediaUrl": null,
+      "mediaType": null,
+      "fileName": null,
+      "fileSize": null,
+      "isVoice": false,
+      "voiceDuration": null,
+      "audioDuration": null,
+      "videoDuration": null,
+      "replyTo": null,
+      "timestamp": 1794004489601,
+      "status": "read",
+      "reactions": {},
+      "isRoundVideo": false,
+      "isEdited": false,
+      "poll": null,
+      "forwardFrom": null,
+      "isSilent": false,
+      "isSpoiler": false,
+      "isDice": false,
+      "diceType": null,
+      "diceValue": null,
+      "burnTimer": null,
+      "inlineKeyboard": null
+    },
+    {
+      "id": "msg_ccb54cfa-ce98-4f22-aca1-28d002518a6b",
+      "chatId": "chat_dm_f0d99ea1-0661-4396-bbf0-2c622538909a",
+      "senderId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "text": "qq",
+      "mediaUrl": null,
+      "mediaType": null,
+      "fileName": null,
+      "fileSize": null,
+      "isVoice": false,
+      "voiceDuration": null,
+      "audioDuration": null,
+      "videoDuration": null,
+      "replyTo": null,
+      "timestamp": 1794004493648,
+      "status": "read",
+      "reactions": {},
+      "isRoundVideo": false,
+      "isEdited": false,
+      "poll": null,
+      "forwardFrom": null,
+      "isSilent": false,
+      "isSpoiler": false,
+      "isDice": false,
+      "diceType": null,
+      "diceValue": null,
+      "burnTimer": null,
+      "inlineKeyboard": null
+    },
+    {
+      "id": "msg_9d6b85dd-5bca-499b-8e8d-4c7326bee80c",
+      "chatId": "chat_dm_f0d99ea1-0661-4396-bbf0-2c622538909a",
+      "senderId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "text": "qq",
+      "mediaUrl": null,
+      "mediaType": null,
+      "fileName": null,
+      "fileSize": null,
+      "isVoice": false,
+      "voiceDuration": null,
+      "audioDuration": null,
+      "videoDuration": null,
+      "replyTo": null,
+      "timestamp": 1794004509220,
+      "status": "read",
+      "reactions": {},
+      "isRoundVideo": false,
+      "isEdited": false,
+      "poll": null,
+      "forwardFrom": null,
+      "isSilent": false,
+      "isSpoiler": false,
+      "isDice": false,
+      "diceType": null,
+      "diceValue": null,
+      "burnTimer": null,
+      "inlineKeyboard": null
+    },
+    {
+      "id": "msg_e470ad2f-f22b-468a-b6d8-0d7b3fea5f07",
+      "chatId": "chat_dm_720ca4f2-17da-4edd-87f7-587bc3147931",
+      "senderId": "user_1d6be0e8-18b1-49eb-aae8-07471e596880",
+      "text": "qq",
+      "mediaUrl": null,
+      "mediaType": null,
+      "fileName": null,
+      "fileSize": null,
+      "isVoice": false,
+      "voiceDuration": null,
+      "audioDuration": null,
+      "videoDuration": null,
+      "replyTo": null,
+      "timestamp": 1794004604095,
+      "status": "read",
+      "reactions": {},
+      "isRoundVideo": false,
+      "isEdited": false,
+      "poll": null,
+      "forwardFrom": null,
+      "isSilent": false,
+      "isSpoiler": false,
+      "isDice": false,
+      "diceType": null,
+      "diceValue": null,
+      "burnTimer": null,
+      "inlineKeyboard": null
+    },
+    {
+      "id": "msg_3e2531d8-4338-45b6-807d-73e874b9627d",
+      "chatId": "chat_dm_720ca4f2-17da-4edd-87f7-587bc3147931",
+      "senderId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "text": "qq",
+      "mediaUrl": null,
+      "mediaType": null,
+      "fileName": null,
+      "fileSize": null,
+      "isVoice": false,
+      "voiceDuration": null,
+      "audioDuration": null,
+      "videoDuration": null,
+      "replyTo": null,
+      "timestamp": 1794004613992,
+      "status": "read",
+      "reactions": {},
+      "isRoundVideo": false,
+      "isEdited": false,
+      "poll": null,
+      "forwardFrom": null,
+      "isSilent": false,
+      "isSpoiler": false,
+      "isDice": false,
+      "diceType": null,
+      "diceValue": null,
+      "burnTimer": null,
+      "inlineKeyboard": null
+    },
+    {
+      "id": "msg_8fc90ac5-d707-4b99-8730-797dbca9c53a",
+      "chatId": "chat_dm_f0d99ea1-0661-4396-bbf0-2c622538909a",
+      "senderId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "text": "ку",
+      "mediaUrl": null,
+      "mediaType": null,
+      "fileName": null,
+      "fileSize": null,
+      "isVoice": false,
+      "voiceDuration": null,
+      "audioDuration": null,
+      "videoDuration": null,
+      "replyTo": null,
+      "timestamp": 1794006079363,
+      "status": "sent",
+      "reactions": {},
+      "isRoundVideo": false,
+      "isEdited": false,
+      "poll": null,
+      "forwardFrom": null,
+      "isSilent": false,
+      "isSpoiler": false,
+      "isDice": false,
+      "diceType": null,
+      "diceValue": null,
+      "burnTimer": null,
+      "inlineKeyboard": null
+    }
+  ],
+  "calls": [
+    {
+      "id": "call_c308c7f1-3c4c-4fcb-ab4c-8cecca557507",
+      "callerId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "receiverId": "user_1d6be0e8-18b1-49eb-aae8-07471e596880",
+      "duration": 18,
+      "status": "completed",
+      "isVideo": false,
+      "timestamp": 1794006428930
+    },
+    {
+      "id": "call_b11e1329-e67a-4699-9157-9ee2b1832695",
+      "callerId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "receiverId": "user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
+      "duration": 0,
+      "status": "missed",
+      "isVideo": false,
+      "timestamp": 1794006406271
+    },
+    {
+      "id": "call_0e9fd203-5f4e-47fa-823b-ac6fff01b83d",
+      "callerId": "user_1d6be0e8-18b1-49eb-aae8-07471e596880",
+      "receiverId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "duration": 24,
+      "status": "completed",
+      "isVideo": true,
+      "timestamp": 1794006003616
+    },
+    {
+      "id": "call_b1d7c68d-248d-4ba8-912c-720af87cbb6f",
+      "callerId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "receiverId": "user_1d6be0e8-18b1-49eb-aae8-07471e596880",
+      "duration": 14,
+      "status": "completed",
+      "isVideo": false,
+      "timestamp": 1794005499561
+    },
+    {
+      "id": "call_d988d6d8-ae71-428d-909a-56ce1a689e00",
+      "callerId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "receiverId": "user_1d6be0e8-18b1-49eb-aae8-07471e596880",
+      "duration": 109,
+      "status": "completed",
+      "isVideo": false,
+      "timestamp": 1794005476077
+    },
+    {
+      "id": "call_26d2d5eb-5f50-449a-9576-1f260c152955",
+      "callerId": "user_1d6be0e8-18b1-49eb-aae8-07471e596880",
+      "receiverId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "duration": 16,
+      "status": "completed",
+      "isVideo": true,
+      "timestamp": 1794004635004
+    },
+    {
+      "id": "call_c034fb4f-9860-40b8-803f-538964c57a96",
+      "callerId": "user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
+      "receiverId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "duration": 108,
+      "status": "completed",
+      "isVideo": false,
+      "timestamp": 1794004232801
+    },
+    {
+      "id": "call_bf320f7a-d605-40fd-a0a0-549d3a912561",
+      "callerId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "receiverId": "user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
+      "duration": 18,
+      "status": "completed",
+      "isVideo": true,
+      "timestamp": 1794004118518
+    },
+    {
+      "id": "call_506de95a-49dc-473a-8684-60fc290e991b",
+      "callerId": "user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
+      "receiverId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "duration": 23,
+      "status": "completed",
+      "isVideo": true,
+      "timestamp": 1794004093412
+    },
+    {
+      "id": "call_a174af9c-526e-41b2-8171-b19c89925138",
+      "callerId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "receiverId": "user_2d5739d9-db3b-4157-9aa0-931fed48c41e",
+      "duration": 79,
+      "status": "completed",
+      "isVideo": false,
+      "timestamp": 1794004065316
+    },
+    {
+      "id": "call_6437744f-9248-44e1-8e26-bf90984df264",
+      "callerId": "user_d87e67f0-759c-438f-a68b-fc0e80bd32bf",
+      "receiverId": "user_bda18047-d324-4c84-8193-186433cb2846",
+      "duration": 0,
+      "status": "missed",
+      "isVideo": false,
+      "timestamp": 1794003701355
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">PRITONN</string>
+    <string name="title_activity_main">PRITONN</string>
+    <string name="package_name">com.pritonn.app</string>
+    <string name="custom_url_scheme">com.pritonn.app</string>
+</resources>

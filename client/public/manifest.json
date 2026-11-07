@@ -1,0 +1,25 @@
+{
+  "name": "PRITONN",
+  "short_name": "PRITONN",
+  "description": "PRITONN Messenger — безопасный мессенджер с аудио, видео и звонками",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1621",
+  "theme_color": "#0e1621",
+  "icons": [
+    {
+      "src": "./logo.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "./logo.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}

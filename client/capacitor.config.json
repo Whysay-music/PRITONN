@@ -1,0 +1,12 @@
+{
+  "appId": "com.pritonn.app",
+  "appName": "PRITONN",
+  "webDir": "dist",
+  "server": {
+    "cleartext": true,
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

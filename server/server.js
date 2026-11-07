@@ -235,11 +235,15 @@ if (db.users) {
     changed = true;
   });
 
-  // Remove verified badge from all chats/channels (only @Admin user is verified)
+  // Remove verified badge and any legacy shared drafts from all chats/channels
   if (db.chats) {
     db.chats.forEach(c => {
       if (c.verified) {
         c.verified = false;
+        changed = true;
+      }
+      if ('draft' in c) {
+        delete c.draft;
         changed = true;
       }
     });
@@ -593,8 +597,9 @@ app.get('/api/chats', (req, res) => {
       }
     }
 
+    const { draft: _legacyDraft, ...cleanChat } = chat;
     return {
-      ...chat,
+      ...cleanChat,
       displayName,
       displayAvatar,
       targetUser: targetUser ? (({ password, ...u }) => u)(targetUser) : null,
@@ -651,8 +656,9 @@ app.post('/api/chats/direct', (req, res) => {
   const populateDirectChat = (chat, userId) => {
     const otherId = chat.members.find(id => id !== userId) || chat.targetUserId;
     const found = otherId ? db.users.find(u => u.id === otherId) : null;
+    const { draft: _legacyDraft, ...cleanChat } = chat;
     return {
-      ...chat,
+      ...cleanChat,
       displayName: found ? found.name : 'Пользователь',
       displayAvatar: found ? found.avatar : null,
       targetUser: found ? (({ password, ...u }) => u)(found) : null
@@ -865,6 +871,7 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
     fileSize: req.body.fileSize || null,
     isVoice: !!isVoice,
     voiceDuration: voiceDuration || null,
+    transcribedText: req.body.transcribedText || null,
     audioDuration: req.body.audioDuration || null,
     videoDuration: req.body.videoDuration || null,
     replyTo,
@@ -1210,35 +1217,61 @@ app.get('/api/messages/search', (req, res) => {
   res.json(matched);
 });
 
-// Save Chat Draft (private to author, do not emit over socket)
+// Drafts are strictly per-user local on device — NEVER store drafts on shared chat objects!
 const handleSaveChatDraft = (req, res) => {
   const { chatId } = req.params;
-  const { draft } = req.body;
   const chat = db.chats.find(c => c.id === chatId);
   if (!chat) return res.status(404).json({ error: 'Chat not found' });
-  chat.draft = draft || null;
-  saveData(db);
-  res.json(chat);
+  if ('draft' in chat) {
+    delete chat.draft;
+    saveData(db);
+  }
+  res.json({ ok: true, chatId });
 };
 app.put('/api/chats/:chatId/draft', handleSaveChatDraft);
 app.post('/api/chats/:chatId/draft', handleSaveChatDraft);
 
-// Transcribe Voice Message
+// Save Real Speech-to-Text Transcription on Voice/Audio Message
 app.post('/api/messages/:id/transcribe', (req, res) => {
   const { id } = req.params;
+  const { transcribedText } = req.body || {};
   const msg = db.messages.find(m => m.id === id);
   if (!msg) return res.status(404).json({ error: 'Message not found' });
 
-  const transcriptions = [
-    '«Привет! Слушай, я только что проверил интерфейс, всё работает просто идеально! Звонки отличные, все эффекты на месте.»',
-    '«Договорились, давай тогда через полчаса созвонимся прямо тут через аудиозвонок в Telegram, протестируем микрофон.»',
-    '«Да, я посмотрел новый дизайн — точная копия Telegram Desktop! Всё летает и анимации плавные.»'
-  ];
+  if (typeof transcribedText === 'string' && transcribedText.trim()) {
+    msg.transcribedText = transcribedText.trim();
+    saveData(db);
 
-  msg.transcribedText = transcriptions[Math.floor(Math.random() * transcriptions.length)];
-  saveData(db);
-  io.emit('message_updated', msg);
+    const chat = db.chats.find(c => c.id === msg.chatId);
+    const recipients = chat && Array.isArray(chat.members) && chat.members.length > 0 ? chat.members : null;
+    if (recipients) {
+      recipients.forEach(memberId => {
+        const sockets = userSockets.get(memberId);
+        if (sockets) {
+          sockets.forEach(sId => io.to(sId).emit('message_updated', msg));
+        }
+      });
+    } else {
+      io.emit('message_updated', msg);
+    }
+  }
   res.json(msg);
+});
+
+// App Version & In-App Updater Metadata Endpoint
+app.get('/api/app-version', (req, res) => {
+  let pkgVersion = '5.12.0';
+  try {
+    const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+    if (rootPkg && rootPkg.version) pkgVersion = rootPkg.version;
+  } catch {}
+  res.json({
+    version: pkgVersion,
+    releaseNotes: 'PRITONN v' + pkgVersion + ' — Голосовые сообщения, ИИ-распознавание речи, фоновый режим, уведомления и автообновление.',
+    apkUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_v${pkgVersion}.apk`,
+    winSetupUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_Setup_${pkgVersion}.exe`,
+    releasePageUrl: 'https://github.com/Whysay-music/PRITONN/releases/latest',
+  });
 });
 
 // Burn on read / self-destruct

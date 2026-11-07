@@ -27,6 +27,13 @@ import { GlobalMusicPlayer, AudioTrack } from './components/GlobalMusicPlayer';
 import { soundEffects } from './utils/sound';
 import { API_BASE_URL } from './config';
 import { getAvatarUrl } from './utils/avatar';
+import { setChatDraft } from './utils/drafts';
+import {
+  areNotificationsEnabled,
+  showAppNotification,
+  syncNativeBackgroundSettings,
+} from './utils/notifications';
+import { AppUpdateInfo, checkForAppUpdate, installAppUpdate } from './utils/updater';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -57,11 +64,68 @@ export const App: React.FC = () => {
   const [activeAudioTrack, setActiveAudioTrack] = useState<AudioTrack | null>(null);
   const [musicPlaylist, setMusicPlaylist] = useState<AudioTrack[]>([]);
 
-  // Request Web Notifications permission
+  // Sync background mode & notification permissions on startup + periodic update checks
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [isUpdateDismissed, setIsUpdateDismissed] = useState(false);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<number>(0);
+  const [updateStatusText, setUpdateStatusText] = useState<string>('');
+  const [voiceChatInviteBanner, setVoiceChatInviteBanner] = useState<{
+    chatId: string;
+    chatName: string;
+    inviterName: string;
+  } | null>(null);
+
   useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default') {
+    syncNativeBackgroundSettings();
+    if (areNotificationsEnabled() && 'Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission().catch(() => {});
     }
+
+    const runUpdateCheck = () => {
+      checkForAppUpdate()
+        .then((info) => {
+          setUpdateInfo(info);
+        })
+        .catch(() => {});
+    };
+    runUpdateCheck();
+    const updateTimer = setInterval(runUpdateCheck, 10 * 60 * 1000);
+    return () => clearInterval(updateTimer);
+  }, []);
+
+  // Open chat when user taps a system / OS notification
+  useEffect(() => {
+    const openChatById = (chatId?: string) => {
+      if (!chatId) return;
+      const found = chatsRef.current.find((c) => c.id === chatId);
+      if (found) {
+        selectChat(found);
+      }
+    };
+
+    const onWebNotifOpen = (e: Event) => {
+      const custom = e as CustomEvent<{ chatId?: string }>;
+      openChatById(custom.detail?.chatId);
+    };
+    window.addEventListener('pritonn-open-chat', onWebNotifOpen);
+
+    (window as any).__onAndroidNotificationOpen = (chatId: string) => {
+      openChatById(chatId);
+    };
+
+    let unsubElectron: (() => void) | undefined;
+    const electron = (window as any).electronAPI;
+    if (electron && typeof electron.onNotificationClick === 'function') {
+      unsubElectron = electron.onNotificationClick((chatId: string) => {
+        openChatById(chatId);
+      });
+    }
+
+    return () => {
+      window.removeEventListener('pritonn-open-chat', onWebNotifOpen);
+      if (unsubElectron) unsubElectron();
+    };
   }, []);
 
   // Modals & Drawers
@@ -183,7 +247,13 @@ export const App: React.FC = () => {
 
   // Connect to Socket.io once and keep connection alive
   useEffect(() => {
-    const socket = io(API_BASE_URL);
+    const socket = io(API_BASE_URL, {
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      transports: ['websocket', 'polling'],
+    });
     socketRef.current = socket;
 
     socket.on('connect', () => {
@@ -246,24 +316,48 @@ export const App: React.FC = () => {
 
       if (msg.senderId === myId) {
         soundEffects.playSent();
-      } else if (!msg.isSilent) {
+      } else if (!msg.isSilent && areNotificationsEnabled()) {
         soundEffects.playReceive();
 
-        // Background Web Notification and Vibration
-        if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+        const shouldShowSystemNotif =
+          document.hidden ||
+          !document.hasFocus() ||
+          activeChatRef.current?.id !== msg.chatId;
+
+        if (shouldShowSystemNotif) {
           const sender = allUsersRef.current.find((u) => u.id === msg.senderId);
-          try {
-            new Notification(sender?.name || 'PRITONN', {
-              body: msg.isVoice
-                ? '🎙 Голосовое сообщение'
-                : msg.mediaUrl
-                ? '📷 Фотография'
-                : msg.text || 'Новое сообщение',
-              icon: getAvatarUrl(sender?.avatar, sender?.name),
-              tag: msg.chatId,
-            });
-          } catch {}
+          const chatObj = chatsRef.current.find((c) => c.id === msg.chatId);
+          const notifTitle =
+            chatObj && (chatObj.type === 'group' || chatObj.type === 'channel')
+              ? `${chatObj.displayName || chatObj.name} • ${sender?.name || 'Участник'}`
+              : sender?.name || chatObj?.displayName || 'PRITONN';
+
+          const notifBody = msg.isVoice
+            ? '🎙 Голосовое сообщение'
+            : msg.isRoundVideo
+            ? '🎥 Видеосообщение'
+            : msg.isSticker
+            ? '✨ Стикер'
+            : msg.mediaUrl
+            ? msg.mediaType === 'audio'
+              ? '🎵 Аудиозапись'
+              : msg.mediaType === 'video'
+              ? '🎬 Видео'
+              : msg.mediaType === 'file'
+              ? `📎 Файл: ${msg.fileName || 'документ'}`
+              : '📷 Фотография'
+            : msg.text || 'Новое сообщение';
+
+          showAppNotification({
+            title: notifTitle,
+            body: notifBody,
+            icon: getAvatarUrl(sender?.avatar, sender?.name),
+            tag: msg.chatId,
+            chatId: msg.chatId,
+            isCall: false,
+          });
         }
+
         if (document.hidden && 'vibrate' in navigator) {
           try {
             navigator.vibrate([200, 100, 200]);
@@ -442,6 +536,16 @@ export const App: React.FC = () => {
     // Call signaling & message editing/poll updates
     socket.on('incoming_call', (callData: any) => {
       setIncomingCall(callData);
+      if (areNotificationsEnabled()) {
+        showAppNotification({
+          title: `📞 Входящий звонок: ${callData?.callerName || 'PRITONN'}`,
+          body: 'Откройте приложение, чтобы ответить на вызов',
+          icon: getAvatarUrl(callData?.callerAvatar, callData?.callerName),
+          tag: 'incoming_call',
+          chatId: callData?.chatId,
+          isCall: true,
+        });
+      }
     });
 
     socket.on('call_ended', () => {
@@ -453,16 +557,17 @@ export const App: React.FC = () => {
     });
 
     socket.on('voice_chat_invitation', ({ chatId, chatName, inviterName }: { chatId: string; chatName: string; inviterName: string }) => {
-      const confirmJoin = window.confirm(`📞 ${inviterName} приглашает вас в голосовой чат «${chatName}». Присоединиться?`);
-      if (confirmJoin) {
-        setChats((currentChats) => {
-          const target = currentChats.find((c) => c.id === chatId);
-          if (target) {
-            setActiveChat(target);
-          }
-          return currentChats;
+      if (areNotificationsEnabled()) {
+        soundEffects.playReceive();
+        showAppNotification({
+          title: `🎙 Голосовой чат «${chatName}»`,
+          body: `${inviterName} приглашает вас подключиться`,
+          tag: `vc_${chatId}`,
+          chatId,
+          isCall: true,
         });
       }
+      setVoiceChatInviteBanner({ chatId, chatName, inviterName });
     });
 
     socket.on('message_edited', (editedMsg: Message) => {
@@ -679,7 +784,7 @@ export const App: React.FC = () => {
   const handleSendMessage = async (data: {
     text: string;
     mediaUrl?: string | null;
-    mediaType?: 'image' | 'video' | 'file' | 'audio' | null;
+    mediaType?: 'image' | 'video' | 'file' | 'audio' | 'voice' | null;
     fileName?: string | null;
     fileSize?: string | null;
     isVoice?: boolean;
@@ -1030,18 +1135,10 @@ export const App: React.FC = () => {
     }
   };
 
-  // Save chat draft text
-  const handleSaveDraft = async (chatId: string, draft: string) => {
-    try {
-      setChats((prev) => prev.map((c) => (c.id === chatId ? { ...c, draft } : c)));
-      await fetch(`${API_BASE_URL}/api/chats/${chatId}/draft`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ draft }),
-      });
-    } catch (err) {
-      console.error('Error saving draft:', err);
-    }
+  // Save chat draft text strictly locally on user's own device (never shared with other users!)
+  const handleSaveDraft = (chatId: string, draft: string) => {
+    if (!currentUser) return;
+    setChatDraft(currentUser.id, chatId, draft);
   };
 
   // Burn message
@@ -1054,16 +1151,45 @@ export const App: React.FC = () => {
     }
   };
 
-  // Transcribe voice message to text
-  const handleTranscribeVoice = async (messageId: string) => {
+  // Persist real speech-to-text transcription for voice / audio message
+  const handleTranscribeVoice = async (messageId: string, transcribedText?: string) => {
+    if (!transcribedText || !transcribedText.trim()) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/messages/${messageId}/transcribe`, { method: 'POST' });
-      const data = await res.json();
       setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, transcribedText: data.transcribedText } : m))
+        prev.map((m) => (m.id === messageId ? { ...m, transcribedText } : m))
       );
+      const res = await fetch(`${API_BASE_URL}/api/messages/${messageId}/transcribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcribedText }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.transcribedText) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === messageId ? { ...m, transcribedText: data.transcribedText } : m))
+          );
+        }
+      }
     } catch (err) {
-      console.error('Error transcribing message:', err);
+      console.error('Error saving message transcription:', err);
+    }
+  };
+
+  const handleTriggerInAppUpdate = async () => {
+    if (!updateInfo || isInstallingUpdate) return;
+    setIsInstallingUpdate(true);
+    setUpdateProgress(1);
+    setUpdateStatusText('Подготовка обновления...');
+    try {
+      await installAppUpdate(updateInfo, (pct, status) => {
+        setUpdateProgress(pct);
+        setUpdateStatusText(status);
+      });
+    } catch (err: any) {
+      alert(`Ошибка обновления: ${err?.message || 'Попробуйте снова через Настройки'}`);
+    } finally {
+      setIsInstallingUpdate(false);
     }
   };
 
@@ -1133,6 +1259,68 @@ export const App: React.FC = () => {
       <div className="hidden md:block">
         <DesktopTitleBar activeChat={activeChat} currentUser={currentUser} allUsers={allUsers} />
       </div>
+
+      {/* In-App Software Update Banner */}
+      {updateInfo?.hasUpdate && !isUpdateDismissed && (
+        <div className="bg-gradient-to-r from-[#2481cc] to-indigo-600 text-white px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-2 shadow-lg z-40">
+          <div className="flex items-center gap-2 font-medium">
+            <span>🚀 Доступно обновление PRITONN v{updateInfo.latestVersion}!</span>
+            {isInstallingUpdate && (
+              <span className="text-blue-100 font-mono">
+                ({updateStatusText || `${updateProgress}%`})
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={isInstallingUpdate}
+              onClick={handleTriggerInAppUpdate}
+              className="px-3 py-1 rounded-lg bg-white text-blue-700 font-bold hover:bg-blue-50 transition cursor-pointer disabled:opacity-60"
+            >
+              {isInstallingUpdate ? `Загрузка ${updateProgress}%...` : 'Обновить сейчас'}
+            </button>
+            {!isInstallingUpdate && (
+              <button
+                type="button"
+                onClick={() => setIsUpdateDismissed(true)}
+                className="px-2 py-1 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition cursor-pointer"
+              >
+                Позже
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Non-blocking Group Voice Chat Invitation Banner */}
+      {voiceChatInviteBanner && (
+        <div className="bg-emerald-600/95 text-white px-4 py-2.5 text-xs flex items-center justify-between gap-3 shadow-lg z-40 animate-fade-in">
+          <div className="truncate font-medium">
+            🎙 <b>{voiceChatInviteBanner.inviterName}</b> приглашает вас в голосовой чат «{voiceChatInviteBanner.chatName}»
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                const target = chats.find((c) => c.id === voiceChatInviteBanner.chatId);
+                if (target) selectChat(target);
+                setVoiceChatInviteBanner(null);
+              }}
+              className="px-3 py-1 rounded-lg bg-white text-emerald-700 font-bold hover:bg-emerald-50 cursor-pointer"
+            >
+              Открыть чат
+            </button>
+            <button
+              type="button"
+              onClick={() => setVoiceChatInviteBanner(null)}
+              className="px-2 py-1 rounded-lg text-white/80 hover:text-white hover:bg-white/10 cursor-pointer"
+            >
+              Закрыть
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Global Music Player (Header Bar) */}
       <GlobalMusicPlayer

@@ -34,6 +34,7 @@ import { TelegramPremiumBadge } from './TelegramPremiumBadge';
 import { isUserVerified } from '../utils/verified';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
 import { API_BASE_URL } from '../config';
+import { getChatDraft } from '../utils/drafts';
 
 interface SidebarProps {
   chats: Chat[];
@@ -113,6 +114,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
   const [chatContextMenu, setChatContextMenu] = useState<{ x: number; y: number; chat: Chat } | null>(null);
+  const [, setDraftRefreshTick] = useState(0);
+
+  useEffect(() => {
+    const onDraftUpdate = () => setDraftRefreshTick((t) => t + 1);
+    window.addEventListener('pritonn-draft-updated', onDraftUpdate);
+    return () => window.removeEventListener('pritonn-draft-updated', onDraftUpdate);
+  }, []);
   const [highlightedChatId, setHighlightedChatId] = useState<string | null>(null);
   const prevLastMsgMap = useRef<{ [chatId: string]: string | undefined }>({});
 
@@ -481,6 +489,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             const { displayName, displayAvatar, targetUser, isSaved, isDirect } = getChatInfo(chat);
 
             const isHighlighted = highlightedChatId === chat.id;
+            const localDraft = getChatDraft(currentUser.id, chat.id);
 
             return (
               <div
@@ -549,11 +558,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between gap-1 text-xs">
-                    {/* Draft Indicator vs Last message */}
-                    {chat.draft && !isActive ? (
+                    {/* Draft Indicator (strictly local to currentUser) vs Last message */}
+                    {localDraft && !isActive ? (
                       <p className="truncate flex-1 text-[13px]">
                         <span className="text-rose-400 font-semibold mr-1">Черновик:</span>
-                        <span className="text-[var(--tg-text-muted)] opacity-90">{chat.draft}</span>
+                        <span className="text-[var(--tg-text-muted)] opacity-90">{localDraft}</span>
                       </p>
                     ) : (
                       <p

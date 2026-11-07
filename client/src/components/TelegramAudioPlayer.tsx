@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, Download, Sparkles, Loader2 } from 'lucide-react';
 import { resolveMediaUrl } from '../utils/avatar';
+import { transcribeAudioUrl } from '../utils/speechToText';
 
 interface TelegramAudioPlayerProps {
   src: string;
@@ -10,6 +11,7 @@ interface TelegramAudioPlayerProps {
   isOutgoing?: boolean;
   transcribedText?: string;
   onTranscribe?: () => void;
+  onSaveTranscription?: (text: string) => void;
 }
 
 export const TelegramAudioPlayer: React.FC<TelegramAudioPlayerProps> = ({
@@ -19,7 +21,7 @@ export const TelegramAudioPlayer: React.FC<TelegramAudioPlayerProps> = ({
   duration: initialDuration,
   isOutgoing,
   transcribedText,
-  onTranscribe,
+  onSaveTranscription,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -95,16 +97,22 @@ export const TelegramAudioPlayer: React.FC<TelegramAudioPlayerProps> = ({
 
   const handleTranscribeClick = async () => {
     if (isTranscribing) return;
-    setIsTranscribing(true);
-    if (onTranscribe) {
-      onTranscribe();
+    if (localTranscribed) {
+      setLocalTranscribed(undefined);
+      return;
     }
-    setTimeout(() => {
+    setIsTranscribing(true);
+    try {
+      const recognized = await transcribeAudioUrl(resolvedSrc);
+      setLocalTranscribed(recognized);
+      if (onSaveTranscription && recognized && !recognized.startsWith('[')) {
+        onSaveTranscription(recognized);
+      }
+    } catch (err: any) {
+      setLocalTranscribed(`Ошибка распознавания: ${err?.message || 'не удалось распознать аудио'}`);
+    } finally {
       setIsTranscribing(false);
-      setLocalTranscribed(
-        '«Привет! Слушай, я только что проверил интерфейс, всё работает просто идеально! Звонки отличные, все эффекты на месте.»'
-      );
-    }, 1200);
+    }
   };
 
   return (

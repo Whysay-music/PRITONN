@@ -1,4 +1,5 @@
 // Procedural Telegram sounds using Web Audio API
+import { areNotificationsEnabled, areSoundsEnabled } from './notifications';
 
 class SoundEffects {
   private ctx: AudioContext | null = null;
@@ -17,6 +18,7 @@ class SoundEffects {
 
   // Telegram sent "pop" sound
   playSent() {
+    if (!areSoundsEnabled()) return;
     try {
       this.initCtx();
       if (!this.ctx) return;
@@ -43,6 +45,7 @@ class SoundEffects {
 
   // Telegram notification ping
   playReceive() {
+    if (!areNotificationsEnabled() || !areSoundsEnabled()) return;
     try {
       this.initCtx();
       if (!this.ctx) return;

@@ -2,21 +2,30 @@ package com.pritonn.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.media.AudioAttributes;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.RingtoneManager;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.view.View;
@@ -24,13 +33,20 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -38,11 +54,20 @@ import java.util.List;
 public class MainActivity extends BridgeActivity {
     private static final int PERMISSIONS_REQUEST_CODE = 1001;
     private static final int SCREEN_CAPTURE_REQUEST_CODE = 4409;
+    private static final int INSTALL_UNKNOWN_APPS_REQUEST_CODE = 4410;
+
+    private static final String PREFS_NAME = "pritonn_native_prefs";
+    private static final String PREF_NOTIF_ENABLED = "notifications_enabled";
+    private static final String PREF_BG_ENABLED = "bg_mode_enabled";
+
+    private static final String MSG_CHANNEL_ID = "pritonn_messages_v2";
+    private static final String CALL_CHANNEL_ID = "pritonn_calls_v2";
 
     private static WeakReference<MainActivity> currentInstanceRef;
 
     private int pendingProjectionResultCode = 0;
     private Intent pendingProjectionData = null;
+    private File pendingApkInstallFile = null;
 
     private MediaProjection mediaProjection = null;
     private VirtualDisplay virtualDisplay = null;
@@ -76,7 +101,8 @@ public class MainActivity extends BridgeActivity {
             e.printStackTrace();
         }
 
-        // 2. Request runtime camera, mic, media, and notification permissions
+        // 2. Create high-priority notification channels & request permissions
+        ensureNotificationChannels();
         requestNeededPermissions();
 
         // 3. Configure WebView WITHOUT overwriting Capacitor's BridgeWebChromeClient!
@@ -94,9 +120,122 @@ public class MainActivity extends BridgeActivity {
                 settings.setJavaScriptCanOpenWindowsAutomatically(true);
 
                 webView.addJavascriptInterface(new AndroidScreenShareBridge(), "AndroidScreenShare");
+                webView.addJavascriptInterface(new AndroidAppBridge(), "AndroidAppBridge");
             }
         } catch (Exception e) {
             e.printStackTrace();
+        }
+
+        // 4. Start background KeepAliveService if enabled by user
+        if (isBgModeEnabledPref()) {
+            startKeepAliveServiceSafe();
+        }
+
+        handleNotificationIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationIntent(intent);
+    }
+
+    private void handleNotificationIntent(Intent intent) {
+        if (intent == null) return;
+        final String chatId = intent.getStringExtra("openChatId");
+        if (chatId != null && !chatId.isEmpty()) {
+            intent.removeExtra("openChatId");
+            final String safeId = chatId.replace("'", "").replace("\\", "");
+            new Handler(getMainLooper()).postDelayed(
+                () -> evalJs("window.__onAndroidNotificationOpen && window.__onAndroidNotificationOpen('" + safeId + "');"),
+                450
+            );
+        }
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        // Keep WebView JS & Socket.IO timers running when minimized or screen locked!
+        if (isBgModeEnabledPref()) {
+            try {
+                WebView webView = this.getBridge() != null ? this.getBridge().getWebView() : null;
+                if (webView != null) {
+                    webView.onResume();
+                    webView.resumeTimers();
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (pendingApkInstallFile != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (getPackageManager().canRequestPackageInstalls()) {
+                File f = pendingApkInstallFile;
+                pendingApkInstallFile = null;
+                launchPackageInstaller(f);
+            }
+        }
+    }
+
+    private SharedPreferences getNativePrefs() {
+        return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    private boolean areNotificationsEnabledPref() {
+        return getNativePrefs().getBoolean(PREF_NOTIF_ENABLED, true);
+    }
+
+    private boolean isBgModeEnabledPref() {
+        return getNativePrefs().getBoolean(PREF_BG_ENABLED, true);
+    }
+
+    private void startKeepAliveServiceSafe() {
+        try {
+            Intent bgIntent = new Intent(this, KeepAliveService.class);
+            ContextCompat.startForegroundService(this, bgIntent);
+        } catch (Throwable ignored) {}
+    }
+
+    private void stopKeepAliveServiceSafe() {
+        try {
+            stopService(new Intent(this, KeepAliveService.class));
+        } catch (Throwable ignored) {}
+    }
+
+    private void ensureNotificationChannels() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            if (nm == null) return;
+
+            NotificationChannel msgChannel = new NotificationChannel(
+                MSG_CHANNEL_ID,
+                "Сообщения PRITONN",
+                NotificationManager.IMPORTANCE_HIGH
+            );
+            msgChannel.setDescription("Уведомления о новых сообщениях");
+            msgChannel.enableVibration(true);
+            nm.createNotificationChannel(msgChannel);
+
+            NotificationChannel callChannel = new NotificationChannel(
+                CALL_CHANNEL_ID,
+                "Входящие звонки PRITONN",
+                NotificationManager.IMPORTANCE_HIGH
+            );
+            callChannel.setDescription("Уведомления о входящих звонках и голосовых чатах");
+            callChannel.enableVibration(true);
+            Uri ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+            if (ringUri != null) {
+                AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+                callChannel.setSound(ringUri, attrs);
+            }
+            nm.createNotificationChannel(callChannel);
         }
     }
 
@@ -130,6 +269,228 @@ public class MainActivity extends BridgeActivity {
                 missing.toArray(new String[0]),
                 PERMISSIONS_REQUEST_CODE
             );
+        }
+    }
+
+    public class AndroidAppBridge {
+        @JavascriptInterface
+        public boolean areNotificationsEnabled() {
+            return areNotificationsEnabledPref();
+        }
+
+        @JavascriptInterface
+        public void setNotificationsEnabled(boolean enabled) {
+            getNativePrefs().edit().putBoolean(PREF_NOTIF_ENABLED, enabled).apply();
+            if (!enabled) {
+                try {
+                    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                    if (nm != null) {
+                        // Cancel message/call alerts while keeping foreground service notification intact
+                        nm.cancelAll();
+                        if (isBgModeEnabledPref()) {
+                            runOnUiThread(MainActivity.this::startKeepAliveServiceSafe);
+                        }
+                    }
+                } catch (Throwable ignored) {}
+            }
+        }
+
+        @JavascriptInterface
+        public boolean isBackgroundModeEnabled() {
+            return isBgModeEnabledPref();
+        }
+
+        @JavascriptInterface
+        public void setBackgroundModeEnabled(boolean enabled) {
+            getNativePrefs().edit().putBoolean(PREF_BG_ENABLED, enabled).apply();
+            runOnUiThread(() -> {
+                if (enabled) {
+                    startKeepAliveServiceSafe();
+                } else {
+                    stopKeepAliveServiceSafe();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void requestIgnoreBatteryOptimizations() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    try {
+                        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                        if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                            intent.setData(Uri.parse("package:" + getPackageName()));
+                            startActivity(intent);
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void showNotification(String title, String body, String tag, boolean isCall) {
+            if (!areNotificationsEnabledPref()) return;
+            try {
+                ensureNotificationChannels();
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm == null) return;
+
+                Intent openIntent = new Intent(MainActivity.this, MainActivity.class);
+                openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                if (tag != null && !tag.isEmpty()) {
+                    openIntent.putExtra("openChatId", tag);
+                }
+
+                int reqCode = tag != null ? Math.abs(tag.hashCode()) : 3001;
+                int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    piFlags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+                PendingIntent pi = PendingIntent.getActivity(MainActivity.this, reqCode, openIntent, piFlags);
+
+                String channelId = isCall ? CALL_CHANNEL_ID : MSG_CHANNEL_ID;
+                NotificationCompat.Builder builder = new NotificationCompat.Builder(MainActivity.this, channelId)
+                    .setSmallIcon(isCall ? android.R.drawable.sym_action_call : android.R.drawable.stat_notify_chat)
+                    .setContentTitle(title != null ? title : "PRITONN")
+                    .setContentText(body != null ? body : "Новое уведомление")
+                    .setStyle(new NotificationCompat.BigTextStyle().bigText(body != null ? body : ""))
+                    .setAutoCancel(true)
+                    .setContentIntent(pi)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(isCall ? NotificationCompat.CATEGORY_CALL : NotificationCompat.CATEGORY_MESSAGE);
+
+                int notifId = isCall ? 4099 : (3100 + (reqCode % 5000));
+                nm.notify(notifId, builder.build());
+            } catch (Throwable e) {
+                e.printStackTrace();
+            }
+        }
+
+        @JavascriptInterface
+        public void downloadAndInstallApk(final String apkUrl) {
+            if (apkUrl == null || apkUrl.trim().isEmpty()) {
+                evalJs("window.__onAndroidUpdateError && window.__onAndroidUpdateError('Пустая ссылка на APK');");
+                return;
+            }
+
+            new Thread(() -> {
+                HttpURLConnection conn = null;
+                InputStream in = null;
+                FileOutputStream out = null;
+                try {
+                    String currentUrl = apkUrl.trim();
+                    int redirects = 0;
+                    while (redirects < 7) {
+                        URL url = new URL(currentUrl);
+                        conn = (HttpURLConnection) url.openConnection();
+                        conn.setInstanceFollowRedirects(false);
+                        conn.setConnectTimeout(15000);
+                        conn.setReadTimeout(30000);
+                        conn.setRequestProperty("User-Agent", "PRITONN-Android-Updater");
+                        conn.setRequestProperty("Accept", "*/*");
+                        conn.connect();
+
+                        int code = conn.getResponseCode();
+                        if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                            String loc = conn.getHeaderField("Location");
+                            conn.disconnect();
+                            if (loc == null || loc.isEmpty()) {
+                                throw new Exception("Пустой редирект сервера обновлений");
+                            }
+                            currentUrl = new URL(url, loc).toString();
+                            redirects++;
+                            continue;
+                        }
+
+                        if (code != HttpURLConnection.HTTP_OK) {
+                            throw new Exception("HTTP " + code);
+                        }
+                        break;
+                    }
+
+                    long totalBytes = conn.getContentLengthLong();
+                    File apkFile = new File(getCacheDir(), "pritonn_update.apk");
+                    if (apkFile.exists()) {
+                        apkFile.delete();
+                    }
+
+                    in = conn.getInputStream();
+                    out = new FileOutputStream(apkFile);
+                    byte[] buf = new byte[16384];
+                    long downloaded = 0L;
+                    int lastPct = -1;
+                    int read;
+                    while ((read = in.read(buf)) != -1) {
+                        out.write(buf, 0, read);
+                        downloaded += read;
+                        if (totalBytes > 0) {
+                            int pct = (int) Math.min(99L, (downloaded * 100L) / totalBytes);
+                            if (pct != lastPct) {
+                                lastPct = pct;
+                                evalJs("window.__onAndroidUpdateProgress && window.__onAndroidUpdateProgress(" + pct + ");");
+                            }
+                        }
+                    }
+                    out.flush();
+                    out.close();
+                    out = null;
+                    in.close();
+                    in = null;
+
+                    evalJs("window.__onAndroidUpdateProgress && window.__onAndroidUpdateProgress(100);");
+                    runOnUiThread(() -> promptInstallApk(apkFile));
+                } catch (Throwable err) {
+                    err.printStackTrace();
+                    String msg = err.getMessage() != null ? err.getMessage().replace("'", "") : "Ошибка сети";
+                    evalJs("window.__onAndroidUpdateError && window.__onAndroidUpdateError('" + msg + "');");
+                } finally {
+                    try { if (out != null) out.close(); } catch (Throwable ignored) {}
+                    try { if (in != null) in.close(); } catch (Throwable ignored) {}
+                    try { if (conn != null) conn.disconnect(); } catch (Throwable ignored) {}
+                }
+            }, "PritonnApkUpdater").start();
+        }
+    }
+
+    private void promptInstallApk(File apkFile) {
+        if (apkFile == null || !apkFile.exists()) {
+            evalJs("window.__onAndroidUpdateError && window.__onAndroidUpdateError('Файл обновления не найден');");
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!getPackageManager().canRequestPackageInstalls()) {
+                pendingApkInstallFile = apkFile;
+                try {
+                    Intent settingsIntent = new Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName())
+                    );
+                    startActivityForResult(settingsIntent, INSTALL_UNKNOWN_APPS_REQUEST_CODE);
+                    return;
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        launchPackageInstaller(apkFile);
+    }
+
+    private void launchPackageInstaller(File apkFile) {
+        try {
+            Uri apkUri = FileProvider.getUriForFile(
+                this,
+                getPackageName() + ".fileprovider",
+                apkFile
+            );
+            Intent installIntent = new Intent(Intent.ACTION_VIEW);
+            installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+            installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(installIntent);
+        } catch (Throwable e) {
+            e.printStackTrace();
+            String msg = e.getMessage() != null ? e.getMessage().replace("'", "") : "Ошибка запуска установщика";
+            evalJs("window.__onAndroidUpdateError && window.__onAndroidUpdateError('" + msg + "');");
         }
     }
 
@@ -168,6 +529,16 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == INSTALL_UNKNOWN_APPS_REQUEST_CODE) {
+            if (pendingApkInstallFile != null) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || getPackageManager().canRequestPackageInstalls()) {
+                    File f = pendingApkInstallFile;
+                    pendingApkInstallFile = null;
+                    launchPackageInstaller(f);
+                }
+            }
+            return;
+        }
         if (requestCode == SCREEN_CAPTURE_REQUEST_CODE) {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 pendingProjectionResultCode = resultCode;

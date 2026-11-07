@@ -1,9 +1,41 @@
-import React, { useState, useRef } from 'react';
-import { User as UserIcon, X, Camera, Moon, Sun, Upload, Check, Folder, Sparkles, Shield, Lock, Smartphone, Laptop, KeyRound, LogOut } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  User as UserIcon,
+  X,
+  Camera,
+  Moon,
+  Sun,
+  Upload,
+  Check,
+  Folder,
+  Lock,
+  Smartphone,
+  Laptop,
+  KeyRound,
+  LogOut,
+  Bell,
+  BellOff,
+  Volume2,
+  Activity,
+  RefreshCw,
+  Download,
+  BatteryCharging,
+} from 'lucide-react';
 import { User } from '../types';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, APP_VERSION } from '../config';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import {
+  areNotificationsEnabled,
+  setNotificationsEnabled,
+  areSoundsEnabled,
+  setSoundsEnabled,
+  isBackgroundModeEnabled,
+  setBackgroundModeEnabled,
+  isAndroidNative,
+  requestAndroidBatteryExemption,
+} from '../utils/notifications';
+import { AppUpdateInfo, checkForAppUpdate, installAppUpdate } from '../utils/updater';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -52,6 +84,79 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [wallpaper, setWallpaper] = useState(() => localStorage.getItem('tg_wallpaper') || 'doodle');
   const [accentColor, setAccentColor] = useState(() => localStorage.getItem('tg_accent') || '#2481cc');
+
+  // Notifications, Sounds, Background Mode & In-App Updater state
+  const [notificationsOn, setNotificationsOn] = useState<boolean>(() => areNotificationsEnabled());
+  const [soundsOn, setSoundsOn] = useState<boolean>(() => areSoundsEnabled());
+  const [bgModeOn, setBgModeOn] = useState<boolean>(() => isBackgroundModeEnabled());
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateCheckResult, setUpdateCheckResult] = useState<AppUpdateInfo | null>(null);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateStatusMsg, setUpdateStatusMsg] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setNotificationsOn(areNotificationsEnabled());
+      setSoundsOn(areSoundsEnabled());
+      setBgModeOn(isBackgroundModeEnabled());
+      checkForAppUpdate()
+        .then((info) => setUpdateCheckResult(info))
+        .catch(() => {});
+    }
+  }, [isOpen]);
+
+  const handleToggleNotifications = () => {
+    const next = !notificationsOn;
+    setNotificationsOn(next);
+    setNotificationsEnabled(next);
+  };
+
+  const handleToggleSounds = () => {
+    const next = !soundsOn;
+    setSoundsOn(next);
+    setSoundsEnabled(next);
+  };
+
+  const handleToggleBgMode = () => {
+    const next = !bgModeOn;
+    setBgModeOn(next);
+    setBackgroundModeEnabled(next);
+  };
+
+  const handleCheckUpdateNow = async () => {
+    if (checkingUpdate || installingUpdate) return;
+    setCheckingUpdate(true);
+    setUpdateStatusMsg('');
+    try {
+      const info = await checkForAppUpdate();
+      setUpdateCheckResult(info);
+      if (!info.hasUpdate) {
+        setUpdateStatusMsg(`У вас установлена самая новая версия (v${APP_VERSION})`);
+      }
+    } catch {
+      setUpdateStatusMsg('Не удалось проверить обновления. Проверьте интернет.');
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const handleInstallUpdateNow = async () => {
+    if (!updateCheckResult || installingUpdate) return;
+    setInstallingUpdate(true);
+    setUpdateProgress(1);
+    setUpdateStatusMsg('Начинаем загрузку обновления...');
+    try {
+      await installAppUpdate(updateCheckResult, (pct, statusText) => {
+        setUpdateProgress(pct);
+        setUpdateStatusMsg(statusText);
+      });
+    } catch (err: any) {
+      setUpdateStatusMsg(`Ошибка установки: ${err?.message || 'попробуйте снова'}`);
+    } finally {
+      setInstallingUpdate(false);
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -342,6 +447,171 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
           </div>
 
+          {/* Notifications & Background Mode */}
+          <div className="bg-[var(--tg-sidebar)] p-3.5 rounded-xl border border-[var(--tg-border)] flex flex-col gap-3">
+            <div className="text-xs font-semibold text-[var(--tg-text)] flex items-center gap-2">
+              {notificationsOn ? (
+                <Bell size={16} className="text-[#3390ec]" />
+              ) : (
+                <BellOff size={16} className="text-rose-400" />
+              )}
+              <span>Уведомления и фоновый режим</span>
+            </div>
+
+            {/* Master Notifications Toggle */}
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-medium text-[var(--tg-text)]">
+                  Уведомления о сообщениях и звонках
+                </div>
+                <div className="text-[10px] text-[var(--tg-text-muted)]">
+                  {notificationsOn
+                    ? 'Включены — приходят при новых сообщениях и вызовах'
+                    : 'Выключены — приложение не будет беспокоить'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleNotifications}
+                className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer p-0.5 flex-shrink-0 ${
+                  notificationsOn ? 'bg-[#3390ec]' : 'bg-zinc-700'
+                }`}
+              >
+                <div
+                  className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
+                    notificationsOn ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Notification Sounds Toggle */}
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--tg-border)]/50">
+              <div className="flex items-center gap-2">
+                <Volume2 size={14} className="text-[#5288c1]" />
+                <div>
+                  <div className="text-xs font-medium text-[var(--tg-text)]">Звуки в приложении</div>
+                  <div className="text-[10px] text-[var(--tg-text-muted)]">
+                    Звук отправки, входящих сообщений и мелодия звонка
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleSounds}
+                className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer p-0.5 flex-shrink-0 ${
+                  soundsOn ? 'bg-[#3390ec]' : 'bg-zinc-700'
+                }`}
+              >
+                <div
+                  className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
+                    soundsOn ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Background Keep-Alive Mode Toggle */}
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--tg-border)]/50">
+              <div className="flex items-center gap-2">
+                <Activity size={14} className="text-emerald-400" />
+                <div>
+                  <div className="text-xs font-medium text-[var(--tg-text)]">Работа в фоновом режиме</div>
+                  <div className="text-[10px] text-[var(--tg-text-muted)]">
+                    Держит связь в трее Windows и на заблокированном экране Android
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleBgMode}
+                className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer p-0.5 flex-shrink-0 ${
+                  bgModeOn ? 'bg-emerald-500' : 'bg-zinc-700'
+                }`}
+              >
+                <div
+                  className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
+                    bgModeOn ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {isAndroidNative() && bgModeOn && (
+              <button
+                type="button"
+                onClick={requestAndroidBatteryExemption}
+                className="mt-0.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[11px] font-medium flex items-center gap-1.5 cursor-pointer transition"
+              >
+                <BatteryCharging size={14} />
+                <span>Отключить ограничение батареи Android для фона</span>
+              </button>
+            )}
+          </div>
+
+          {/* In-App Software Updater */}
+          <div className="bg-[var(--tg-sidebar)] p-3.5 rounded-xl border border-[var(--tg-border)] flex flex-col gap-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Download size={16} className="text-[#3390ec]" />
+                <div>
+                  <div className="text-xs font-semibold text-[var(--tg-text)]">Обновление программы</div>
+                  <div className="text-[10px] text-[var(--tg-text-muted)]">
+                    Текущая версия: <span className="font-mono font-bold text-[#5288c1]">v{APP_VERSION}</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={checkingUpdate || installingUpdate}
+                onClick={handleCheckUpdateNow}
+                className="px-2.5 py-1 rounded-lg bg-[var(--tg-surface)] hover:bg-[var(--tg-surface-hover)] border border-[var(--tg-border)] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition disabled:opacity-50"
+              >
+                <RefreshCw size={12} className={checkingUpdate ? 'animate-spin text-[#3390ec]' : ''} />
+                <span>{checkingUpdate ? 'Проверка...' : 'Проверить'}</span>
+              </button>
+            </div>
+
+            {updateCheckResult?.hasUpdate ? (
+              <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 flex flex-col gap-2">
+                <div className="text-xs font-semibold text-blue-400">
+                  🚀 Доступна новая версия PRITONN v{updateCheckResult.latestVersion}!
+                </div>
+                {installingUpdate && (
+                  <div className="w-full bg-black/30 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-[#3390ec] h-full transition-all duration-150"
+                      style={{ width: `${Math.max(4, updateProgress)}%` }}
+                    />
+                  </div>
+                )}
+                {updateStatusMsg && (
+                  <div className="text-[11px] text-[var(--tg-text-muted)]">{updateStatusMsg}</div>
+                )}
+                <button
+                  type="button"
+                  disabled={installingUpdate}
+                  onClick={handleInstallUpdateNow}
+                  className="w-full py-2 rounded-xl bg-[#3390ec] hover:bg-blue-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow cursor-pointer transition disabled:opacity-60"
+                >
+                  <Download size={14} />
+                  <span>
+                    {installingUpdate
+                      ? `Скачивание ${updateProgress}%...`
+                      : `Скачать и установить v${updateCheckResult.latestVersion}`}
+                  </span>
+                </button>
+              </div>
+            ) : (
+              <div className="text-[11px] text-emerald-400/90 flex items-center gap-1.5">
+                <Check size={13} />
+                <span>
+                  {updateStatusMsg || `Установлена актуальная версия PRITONN v${APP_VERSION}`}
+                </span>
+              </div>
+            )}
+          </div>
+
           {/* Privacy & App Lock (Код-пароль разблокировки) */}
           <div className="bg-[var(--tg-sidebar)] p-3.5 rounded-xl border border-[var(--tg-border)] flex flex-col gap-2.5">
             <div className="flex items-center justify-between">
@@ -411,7 +681,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <Smartphone size={15} className="text-emerald-400" />
                   <div>
                     <div className="font-medium text-[var(--tg-text)]">PRITONN Mobile (Android)</div>
-                    <div className="text-[10px] text-[var(--tg-text-muted)]">Приложение • Версия 5.8.9</div>
+                    <div className="text-[10px] text-[var(--tg-text-muted)]">Приложение • Версия {APP_VERSION}</div>
                   </div>
                 </div>
                 <span className="text-[10px] text-emerald-400 font-bold">АКТИВНО</span>

@@ -76,6 +76,7 @@ import { RockPaperScissorsGame } from './RockPaperScissorsGame';
 import { DiceDuelGame } from './DiceDuelGame';
 import { ChatWallpaperModal } from './ChatWallpaperModal';
 import { ScheduledMessageModal } from './ScheduledMessageModal';
+import { getChatDraft, setChatDraft, clearChatDraft } from '../utils/drafts';
 
 interface ChatAreaProps {
   chat: Chat | null;
@@ -88,7 +89,7 @@ interface ChatAreaProps {
   onSendMessage: (data: {
     text: string;
     mediaUrl?: string | null;
-    mediaType?: 'image' | 'video' | 'file' | 'audio' | null;
+    mediaType?: 'image' | 'video' | 'file' | 'audio' | 'voice' | null;
     fileName?: string | null;
     fileSize?: string | null;
     isVoice?: boolean;
@@ -126,7 +127,7 @@ interface ChatAreaProps {
   onOpenPremium?: () => void;
   onSaveDraft?: (chatId: string, text: string) => void;
   onTriggerFullscreenEmoji?: (emoji: string) => void;
-  onTranscribeVoice?: (messageId: string) => void;
+  onTranscribeVoice?: (messageId: string, transcribedText?: string) => void;
   onPlayGlobalAudio?: (track: { id: string; url: string; title: string; artist?: string }) => void;
   onBack?: () => void;
 }
@@ -248,29 +249,18 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
   const [isBurnMenuOpen, setIsBurnMenuOpen] = useState(false);
   const [revealedSpoilers, setRevealedSpoilers] = useState<{ [msgId: string]: boolean }>({});
 
-  // Sync draft text on chat change
-  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  // Sync strictly private local draft text on chat change (never shared across users)
   useEffect(() => {
-    if (draftTimerRef.current) {
-      clearTimeout(draftTimerRef.current);
-    }
-    if (chat?.draft) {
-      setInputText(chat.draft);
-    } else {
-      setInputText('');
-    }
+    const savedDraft = getChatDraft(currentUser.id, chat?.id);
+    setInputText(savedDraft);
     setReplyingTo(null);
     setEditingMessage(null);
-  }, [chat?.id]);
+  }, [chat?.id, currentUser.id]);
 
   const handleInputChange = (val: string) => {
     setInputText(val);
-    if (chat && onSaveDraft) {
-      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
-      draftTimerRef.current = setTimeout(() => {
-        onSaveDraft(chat.id, val);
-      }, 600);
+    if (chat) {
+      setChatDraft(currentUser.id, chat.id, val);
     }
   };
 
@@ -297,9 +287,52 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     setTimeout(() => setCopiedMsgId(null), 1500);
   };
 
-  // Voice recording state
+  // Real microphone voice recording state & refs
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [voiceMicLevel, setVoiceMicLevel] = useState(0);
+  const voiceMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const voiceShouldSendRef = useRef<boolean>(false);
+  const voiceStartTimeRef = useRef<number>(0);
+  const voiceAudioCtxRef = useRef<AudioContext | null>(null);
+  const voiceMeterFrameRef = useRef<number | null>(null);
+  const voiceReplyIdRef = useRef<string | undefined>(undefined);
+
+  const cleanupVoiceRecordingResources = () => {
+    if (voiceMeterFrameRef.current) {
+      cancelAnimationFrame(voiceMeterFrameRef.current);
+      voiceMeterFrameRef.current = null;
+    }
+    if (voiceAudioCtxRef.current) {
+      try {
+        voiceAudioCtxRef.current.close();
+      } catch {}
+      voiceAudioCtxRef.current = null;
+    }
+    if (voiceStreamRef.current) {
+      voiceStreamRef.current.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {}
+      });
+      voiceStreamRef.current = null;
+    }
+    setVoiceMicLevel(0);
+  };
+
+  useEffect(() => {
+    return () => {
+      voiceShouldSendRef.current = false;
+      if (voiceMediaRecorderRef.current && voiceMediaRecorderRef.current.state !== 'inactive') {
+        try {
+          voiceMediaRecorderRef.current.stop();
+        } catch {}
+      }
+      cleanupVoiceRecordingResources();
+    };
+  }, [chat?.id]);
 
   // Attachment popup menu & Media Modals
   const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
@@ -435,10 +468,8 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     });
 
     setInputText('');
-    if (draftTimerRef.current) {
-      clearTimeout(draftTimerRef.current);
-      if (onSaveDraft) onSaveDraft(chat.id, '');
-    }
+    clearChatDraft(currentUser.id, chat.id);
+    if (onSaveDraft) onSaveDraft(chat.id, '');
     setIsSpoilerSend(false);
     setSelectedBurnTimer(undefined);
     setReplyingTo(null);
@@ -458,21 +489,196 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
     }
   };
 
-  // Simulated voice recording finish
+  // Real Microphone Voice Recording
+  const handleStartVoiceRecording = async () => {
+    if (isRecordingVoice) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('Запись голосовых сообщений не поддерживается на этом устройстве.');
+      return;
+    }
+
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        alert('Не удалось получить доступ к микрофону. Разрешите доступ к микрофону в настройках.');
+        return;
+      }
+    }
+
+    voiceStreamRef.current = stream;
+    voiceChunksRef.current = [];
+    voiceShouldSendRef.current = false;
+    voiceStartTimeRef.current = Date.now();
+    voiceReplyIdRef.current = replyingTo?.id;
+
+    // Live audio level meter so user sees their voice being captured
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        voiceAudioCtxRef.current = ctx;
+        const srcNode = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        srcNode.connect(analyser);
+        const dataArr = new Uint8Array(analyser.frequencyBinCount);
+        const tick = () => {
+          if (!voiceAudioCtxRef.current) return;
+          analyser.getByteFrequencyData(dataArr);
+          let sum = 0;
+          for (let i = 0; i < dataArr.length; i++) sum += dataArr[i];
+          const avg = sum / Math.max(1, dataArr.length);
+          setVoiceMicLevel(Math.min(100, Math.round(avg * 1.8)));
+          voiceMeterFrameRef.current = requestAnimationFrame(tick);
+        };
+        tick();
+      }
+    } catch {}
+
+    const candidateMimeTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+    ];
+    let chosenMime = '';
+    if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+      for (const m of candidateMimeTypes) {
+        if (MediaRecorder.isTypeSupported(m)) {
+          chosenMime = m;
+          break;
+        }
+      }
+    }
+
+    try {
+      const recorder = chosenMime
+        ? new MediaRecorder(stream, { mimeType: chosenMime })
+        : new MediaRecorder(stream);
+      voiceMediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          voiceChunksRef.current.push(ev.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const shouldSend = voiceShouldSendRef.current;
+        const chunks = [...voiceChunksRef.current];
+        const actualMime = recorder.mimeType || chosenMime || 'audio/webm';
+        const durationSec = Math.max(1, Math.round((Date.now() - voiceStartTimeRef.current) / 1000));
+        const replyId = voiceReplyIdRef.current;
+
+        voiceChunksRef.current = [];
+        voiceMediaRecorderRef.current = null;
+        cleanupVoiceRecordingResources();
+
+        if (!shouldSend || chunks.length === 0) return;
+
+        const voiceBlob = new Blob(chunks, { type: actualMime });
+        if (voiceBlob.size < 64) return;
+
+        const ext = actualMime.includes('mp4') || actualMime.includes('m4a')
+          ? 'm4a'
+          : actualMime.includes('ogg')
+          ? 'ogg'
+          : 'webm';
+
+        setIsUploadingMedia(true);
+        try {
+          const formData = new FormData();
+          formData.append('file', voiceBlob, `voice_${Date.now()}.${ext}`);
+          const res = await fetch(`${API_BASE_URL}/api/upload`, {
+            method: 'POST',
+            body: formData,
+          });
+          if (res.ok) {
+            const data = await res.json();
+            onSendMessage({
+              text: '',
+              mediaUrl: data.url,
+              mediaType: 'voice',
+              isVoice: true,
+              voiceDuration: durationSec,
+              replyToId: replyId,
+            });
+            setReplyingTo(null);
+            setIsUploadingMedia(false);
+            return;
+          }
+        } catch (err) {
+          console.warn('Voice upload error, falling back to DataURL:', err);
+        }
+
+        // Offline / fallback DataURL
+        const reader = new FileReader();
+        reader.onload = () => {
+          onSendMessage({
+            text: '',
+            mediaUrl: reader.result as string,
+            mediaType: 'voice',
+            isVoice: true,
+            voiceDuration: durationSec,
+            replyToId: replyId,
+          });
+          setReplyingTo(null);
+          setIsUploadingMedia(false);
+        };
+        reader.onerror = () => setIsUploadingMedia(false);
+        reader.readAsDataURL(voiceBlob);
+      };
+
+      recorder.start(200);
+      setIsRecordingVoice(true);
+    } catch (err) {
+      console.error('MediaRecorder start failed:', err);
+      cleanupVoiceRecordingResources();
+      alert('Ошибка запуска записи микрофона.');
+    }
+  };
+
   const handleFinishVoiceRecording = () => {
+    voiceShouldSendRef.current = true;
     setIsRecordingVoice(false);
-    onSendMessage({
-      text: '',
-      isVoice: true,
-      voiceDuration: Math.max(recordingSeconds, 3),
-      replyToId: replyingTo?.id,
-    });
-    setReplyingTo(null);
+    const recorder = voiceMediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.requestData();
+      } catch {}
+      try {
+        recorder.stop();
+      } catch {
+        cleanupVoiceRecordingResources();
+      }
+    } else {
+      cleanupVoiceRecordingResources();
+    }
   };
 
   const handleCancelVoiceRecording = () => {
+    voiceShouldSendRef.current = false;
     setIsRecordingVoice(false);
     setRecordingSeconds(0);
+    const recorder = voiceMediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.stop();
+      } catch {}
+    }
+    cleanupVoiceRecordingResources();
   };
 
   // Telegram Video Note (Кружочек) sending
@@ -609,8 +815,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           burnTimer: burnToSend,
         });
         setInputText('');
-        if (chat && onSaveDraft) {
-          onSaveDraft(chat.id, '');
+        if (chat) {
+          clearChatDraft(currentUser.id, chat.id);
+          if (onSaveDraft) onSaveDraft(chat.id, '');
         }
         setIsSpoilerSend(false);
         setSelectedBurnTimer(undefined);
@@ -644,8 +851,9 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
         burnTimer: burnToSend,
       });
       setInputText('');
-      if (chat && onSaveDraft) {
-        onSaveDraft(chat.id, '');
+      if (chat) {
+        clearChatDraft(currentUser.id, chat.id);
+        if (onSaveDraft) onSaveDraft(chat.id, '');
       }
       setIsSpoilerSend(false);
       setSelectedBurnTimer(undefined);
@@ -1346,7 +1554,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 )}
 
                 {/* Music / Audio Track */}
-                {msg.mediaUrl && msg.mediaType === 'audio' && (
+                {!msg.isVoice && msg.mediaUrl && msg.mediaType === 'audio' && (
                   <div className="mb-1.5">
                     <TelegramAudioPlayer
                       src={resolveMediaUrl(msg.mediaUrl)}
@@ -1355,7 +1563,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                       duration={msg.audioDuration}
                       isOutgoing={isOutgoing}
                       transcribedText={msg.transcribedText}
-                      onTranscribe={() => onTranscribeVoice && onTranscribeVoice(msg.id)}
+                      onSaveTranscription={(text) => onTranscribeVoice && onTranscribeVoice(msg.id, text)}
                     />
                   </div>
                 )}
@@ -1476,7 +1684,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 )}
 
                 {/* Audio File with Global Music Player button */}
-                {msg.mediaUrl && (msg.mediaType === 'audio' || msg.mediaUrl.match(/\.(mp3|wav|ogg|m4a|aac)$/i)) && (
+                {!msg.isVoice && msg.mediaUrl && (msg.mediaType === 'audio' || msg.mediaUrl.match(/\.(mp3|wav|ogg|m4a|aac)$/i)) && (
                   <div className="my-1.5 p-2 rounded-xl bg-black/20 border border-white/10 flex items-center justify-between gap-3 select-none">
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="w-8 h-8 rounded-lg bg-[#5288c1]/20 text-[#5288c1] flex items-center justify-center flex-shrink-0">
@@ -1508,10 +1716,11 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 {/* Voice Message, Dice, or Text */}
                 {msg.isVoice ? (
                   <VoiceMessagePlayer
-                    duration={msg.voiceDuration || 12}
+                    src={msg.mediaUrl}
+                    duration={msg.voiceDuration || 1}
                     isOutgoing={isOutgoing}
                     transcribedText={msg.transcribedText}
-                    onTranscribe={() => onTranscribeVoice && onTranscribeVoice(msg.id)}
+                    onSaveTranscription={(text) => onTranscribeVoice && onTranscribeVoice(msg.id, text)}
                   />
                 ) : msg.isDice ? (
                   <div className="py-1">
@@ -2011,24 +2220,39 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
           )}
 
           {isRecordingVoice ? (
-            /* Voice Recording UI */
-            <div className="flex-1 flex items-center justify-between bg-rose-500/10 border border-rose-500/30 px-4 py-2.5 rounded-2xl animate-pulse">
-              <div className="flex items-center gap-2 text-rose-400 text-xs font-semibold">
-                <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping" />
-                <span>Запись войса... 0:{recordingSeconds.toString().padStart(2, '0')}</span>
+            /* Real Microphone Voice Recording UI with Live Level Meter */
+            <div className="flex-1 flex items-center justify-between bg-rose-500/10 border border-rose-500/30 px-4 py-2.5 rounded-2xl">
+              <div className="flex items-center gap-2.5 text-rose-400 text-xs font-semibold">
+                <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping flex-shrink-0" />
+                <span>
+                  Запись: {Math.floor(recordingSeconds / 60)}:
+                  {(recordingSeconds % 60).toString().padStart(2, '0')}
+                </span>
+                <div className="hidden sm:flex items-center gap-0.5 h-4 ml-1">
+                  {[0.4, 0.7, 1.0, 0.8, 0.5, 0.9, 0.6].map((mult, idx) => {
+                    const barH = Math.max(3, Math.min(16, Math.round((voiceMicLevel / 100) * 16 * mult) + 3));
+                    return (
+                      <span
+                        key={idx}
+                        className="w-1 bg-rose-400 rounded-full transition-all duration-75"
+                        style={{ height: `${barH}px` }}
+                      />
+                    );
+                  })}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={handleCancelVoiceRecording}
-                  className="text-xs text-[var(--tg-text-muted)] hover:text-white px-2 py-1"
+                  className="text-xs text-[var(--tg-text-muted)] hover:text-white px-2 py-1 cursor-pointer"
                 >
                   Отмена
                 </button>
                 <button
                   type="button"
                   onClick={handleFinishVoiceRecording}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-xl text-xs font-semibold flex items-center gap-1"
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-xl text-xs font-semibold flex items-center gap-1 cursor-pointer shadow"
                 >
                   <Send size={12} />
                   <span>Отправить</span>
@@ -2194,7 +2418,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                     type="button"
                     onClick={() => {
                       if (mediaInputMode === 'voice') {
-                        setIsRecordingVoice(true);
+                        handleStartVoiceRecording();
                       } else {
                         setIsVideoNoteRecorderOpen(true);
                       }

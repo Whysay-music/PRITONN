@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Phone, PhoneOff, Shield } from 'lucide-react';
 import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import { areNotificationsEnabled, areSoundsEnabled, showAppNotification } from '../utils/notifications';
 
 interface IncomingCallModalProps {
   callerName: string;
@@ -28,32 +29,24 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
     return () => clearTimeout(timer);
   }, [onDecline]);
 
-  // System notification and vibration
+  // System notification and vibration (gated by user notification setting)
   useEffect(() => {
-    if ('Notification' in window) {
-      if (Notification.permission === 'granted') {
-        try {
-          const notif = new Notification(`Входящий звонок: ${callerName}`, {
-            body: 'Нажмите, чтобы ответить на звонок в PRITONN',
-            icon: getAvatarUrl(callerAvatar, callerName),
-            tag: 'incoming_call',
-          });
-          notif.onclick = () => {
-            window.focus();
-            onAccept();
-          };
-        } catch {}
-      } else if (Notification.permission !== 'denied') {
-        Notification.requestPermission();
-      }
-    }
+    if (!areNotificationsEnabled()) return;
+
+    showAppNotification({
+      title: `📞 Входящий звонок: ${callerName}`,
+      body: 'Нажмите, чтобы ответить на звонок в PRITONN',
+      icon: getAvatarUrl(callerAvatar, callerName),
+      tag: 'incoming_call',
+      isCall: true,
+    });
 
     if ('vibrate' in navigator) {
       try {
         navigator.vibrate([400, 200, 400, 200, 600]);
       } catch {}
     }
-  }, [callerName, callerAvatar, onAccept]);
+  }, [callerName, callerAvatar]);
 
   const isStoppedRef = useRef(false);
   const ringIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -91,6 +84,11 @@ export const IncomingCallModal: React.FC<IncomingCallModalProps> = ({
 
   useEffect(() => {
     isStoppedRef.current = false;
+    if (!areNotificationsEnabled() || !areSoundsEnabled()) {
+      return () => {
+        stopRing();
+      };
+    }
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (AudioCtx) {

@@ -90,7 +90,7 @@ export interface Message {
     isVideo?: boolean;
   };
   mediaUrl?: string | null;
-  mediaType?: 'image' | 'video' | 'file' | 'audio' | null;
+  mediaType?: 'image' | 'video' | 'file' | 'audio' | 'voice' | null;
   fileName?: string | null;
   fileSize?: string | null;
   isVoice?: boolean;

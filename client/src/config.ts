@@ -1,3 +1,5 @@
+export const APP_VERSION = '5.12.0';
+export const GITHUB_REPO = 'Whysay-music/PRITONN';
 export const DEFAULT_ONLINE_SERVER = 'https://pritonn-production.up.railway.app';
 
 export const getApiUrl = (): string => {

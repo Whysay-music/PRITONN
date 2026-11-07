@@ -1557,6 +1557,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 {!msg.isVoice && msg.mediaUrl && msg.mediaType === 'audio' && (
                   <div className="mb-1.5">
                     <TelegramAudioPlayer
+                      messageId={msg.id}
                       src={resolveMediaUrl(msg.mediaUrl)}
                       title={msg.fileName}
                       fileSize={msg.fileSize}
@@ -1716,6 +1717,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({
                 {/* Voice Message, Dice, or Text */}
                 {msg.isVoice ? (
                   <VoiceMessagePlayer
+                    messageId={msg.id}
                     src={msg.mediaUrl}
                     duration={msg.voiceDuration || 1}
                     isOutgoing={isOutgoing}

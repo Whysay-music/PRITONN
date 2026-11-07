@@ -5,8 +5,17 @@ import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import crypto from 'crypto';
+import zlib from 'zlib';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import ffmpegPath from 'ffmpeg-static';
+import pkgWavefile from 'wavefile';
+import { pipeline, env as hfEnv } from '@huggingface/transformers';
+
+const { WaveFile } = pkgWavefile;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,12 +30,28 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 4000;
+const VOLUME_DIR = process.env.DB_DIR || (fs.existsSync('/data') ? '/data' : null);
+const PERSISTENT_DB_FILE = process.env.DB_PATH || (VOLUME_DIR ? path.join(VOLUME_DIR, 'data.json') : null);
 const DB_FILE = path.join(__dirname, 'data.json');
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const UPLOADS_DIR = VOLUME_DIR ? path.join(VOLUME_DIR, 'uploads') : path.join(__dirname, 'uploads');
+const LEGACY_UPLOADS_DIR = path.join(__dirname, 'uploads');
 const CLIENT_DIST = path.join(__dirname, '../client/dist');
+const REMOTE_SNAPSHOT_URL =
+  process.env.REMOTE_DB_SNAPSHOT_URL ||
+  'https://raw.githubusercontent.com/Whysay-music/PRITONN/db-state/db-snapshot.enc';
+const SNAPSHOT_KEY = crypto
+  .createHash('sha256')
+  .update(process.env.DB_SYNC_SECRET || 'pritonn-v5-persistent-cloud-vault-2026')
+  .digest();
+
+hfEnv.allowLocalModels = false;
+hfEnv.cacheDir = VOLUME_DIR ? path.join(VOLUME_DIR, '.hf-cache') : path.join(__dirname, '.hf-cache');
 
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+if (!fs.existsSync(LEGACY_UPLOADS_DIR)) {
+  fs.mkdirSync(LEGACY_UPLOADS_DIR, { recursive: true });
 }
 
 // Multer storage with safe extension inference for mobile & blob uploads
@@ -73,8 +98,25 @@ app.use('/uploads', (req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Accept-Ranges', 'bytes');
+
+  // Auto-restore small media (avatars, voice messages) from mediaStore or legacy uploads if container restarted
+  try {
+    const cleanName = path.basename(decodeURIComponent(req.path || ''));
+    if (cleanName && cleanName !== '.' && cleanName !== '..') {
+      const targetPath = path.join(UPLOADS_DIR, cleanName);
+      if (!fs.existsSync(targetPath)) {
+        const legacyPath = path.join(LEGACY_UPLOADS_DIR, cleanName);
+        if (LEGACY_UPLOADS_DIR !== UPLOADS_DIR && fs.existsSync(legacyPath)) {
+          fs.copyFileSync(legacyPath, targetPath);
+        } else if (typeof db !== 'undefined' && db?.mediaStore?.[cleanName]?.b64) {
+          fs.writeFileSync(targetPath, Buffer.from(db.mediaStore[cleanName].b64, 'base64'));
+        }
+      }
+    }
+  } catch {}
+
   next();
-}, express.static(UPLOADS_DIR));
+}, express.static(UPLOADS_DIR), express.static(LEGACY_UPLOADS_DIR));
 
 if (fs.existsSync(CLIENT_DIST)) {
   app.use(express.static(CLIENT_DIST));
@@ -102,31 +144,316 @@ function getDefaultData() {
     ],
     stories: [],
     chats: [],
-    messages: []
+    messages: [],
+    calls: [],
+    deletedIds: [],
+    mediaStore: {}
   };
 }
 
-function loadData() {
+function encryptSnapshot(dataObj) {
+  const iv = crypto.randomBytes(16);
+  const compressed = zlib.gzipSync(Buffer.from(JSON.stringify(dataObj), 'utf8'));
+  const cipher = crypto.createCipheriv('aes-256-cbc', SNAPSHOT_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(compressed), cipher.final()]);
+  return `${iv.toString('hex')}:${encrypted.toString('base64')}`;
+}
+
+function decryptSnapshot(payloadStr) {
+  if (!payloadStr || typeof payloadStr !== 'string') return null;
+  const trimmed = payloadStr.trim();
+  if (!trimmed.includes(':')) return null;
+  const [ivHex, encB64] = trimmed.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const encrypted = Buffer.from(encB64, 'base64');
+  const decipher = crypto.createDecipheriv('aes-256-cbc', SNAPSHOT_KEY, iv);
+  const decryptedBuf = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  let jsonStr;
   try {
-    if (fs.existsSync(DB_FILE)) {
-      let content = fs.readFileSync(DB_FILE, 'utf-8');
+    jsonStr = zlib.gunzipSync(decryptedBuf).toString('utf8');
+  } catch {
+    jsonStr = decryptedBuf.toString('utf8');
+  }
+  return JSON.parse(jsonStr);
+}
+
+function restoreMediaStoreFiles(dataObj) {
+  if (!dataObj?.mediaStore || typeof dataObj.mediaStore !== 'object') return;
+  for (const [filename, entry] of Object.entries(dataObj.mediaStore)) {
+    try {
+      if (!entry?.b64) continue;
+      const safeName = path.basename(filename);
+      const destPath = path.join(UPLOADS_DIR, safeName);
+      if (!fs.existsSync(destPath)) {
+        fs.writeFileSync(destPath, Buffer.from(entry.b64, 'base64'));
+      }
+    } catch {}
+  }
+}
+
+// Additive union-merge so registered users, chats, messages, and voice/avatar files NEVER disappear on redeploy!
+function mergeDatabases(baseDb, incomingDb) {
+  if (!incomingDb || typeof incomingDb !== 'object') return baseDb;
+
+  const deletedIds = Array.from(
+    new Set([...(baseDb.deletedIds || []), ...(incomingDb.deletedIds || [])])
+  ).slice(-3000);
+  const deletedSet = new Set(deletedIds);
+
+  // 1. Union-merge registered users (NEVER delete registered users!)
+  const mergedUsers = [...(baseDb.users || [])];
+  for (const incUser of incomingDb.users || []) {
+    if (!incUser || (!incUser.id && !incUser.username)) continue;
+    const cleanIncUsername = (incUser.username || '').toLowerCase();
+    const idx = mergedUsers.findIndex(
+      (u) =>
+        u.id === incUser.id ||
+        (cleanIncUsername && (u.username || '').toLowerCase() === cleanIncUsername)
+    );
+    if (idx === -1) {
+      mergedUsers.push({ ...incUser });
+    } else {
+      const existing = mergedUsers[idx];
+      const mergedBlocked = Array.from(
+        new Set([...(existing.blockedUserIds || []), ...(incUser.blockedUserIds || [])])
+      );
+      const existingFolders = existing.customFolders || [];
+      const incFolders = incUser.customFolders || [];
+      const folderMap = new Map();
+      [...existingFolders, ...incFolders].forEach((f) => {
+        if (f?.id) folderMap.set(f.id, f);
+      });
+      const preferIncomingAvatar =
+        incUser.avatar &&
+        (!existing.avatar ||
+          (existing.avatar.includes('dicebear.com') && !incUser.avatar.includes('dicebear.com')));
+
+      mergedUsers[idx] = {
+        ...incUser,
+        ...existing,
+        id: existing.id || incUser.id,
+        password: existing.password || incUser.password || '',
+        phone: existing.phone || incUser.phone || '',
+        bio: existing.bio || incUser.bio || 'Пользователь PRITONN',
+        avatar: preferIncomingAvatar ? incUser.avatar : existing.avatar || incUser.avatar,
+        isPremium: existing.isPremium !== undefined ? existing.isPremium : incUser.isPremium,
+        emojiStatus: existing.emojiStatus || incUser.emojiStatus,
+        blockedUserIds: mergedBlocked,
+        customFolders: folderMap.size > 0 ? Array.from(folderMap.values()) : existing.customFolders,
+      };
+    }
+  }
+
+  // 2. Union-merge chats
+  const chatMap = new Map();
+  for (const c of [...(incomingDb.chats || []), ...(baseDb.chats || [])]) {
+    if (!c?.id || deletedSet.has(c.id)) continue;
+    const prev = chatMap.get(c.id);
+    if (!prev) {
+      chatMap.set(c.id, { ...c });
+    } else {
+      const members = Array.from(new Set([...(prev.members || []), ...(c.members || [])]));
+      chatMap.set(c.id, {
+        ...prev,
+        ...c,
+        members,
+        wallpaper: c.wallpaper || prev.wallpaper,
+        pinnedMessageId: c.pinnedMessageId !== undefined ? c.pinnedMessageId : prev.pinnedMessageId,
+      });
+    }
+  }
+
+  // Ensure every non-bot user has their personal Saved Messages chat
+  for (const u of mergedUsers) {
+    if (!u?.id || u.isBot || u.id === 'user_bot') continue;
+    const savedId = `chat_saved_${u.id}`;
+    const hasSaved = Array.from(chatMap.values()).some(
+      (c) => c.type === 'saved' && Array.isArray(c.members) && c.members.includes(u.id)
+    );
+    if (!hasSaved && !deletedSet.has(savedId)) {
+      chatMap.set(savedId, {
+        id: savedId,
+        type: 'saved',
+        name: 'Избранное',
+        avatar: '/telegram-saved.svg',
+        members: [u.id],
+        isPinned: true,
+        createdAt: Date.now(),
+        unreadCount: 0,
+      });
+    }
+  }
+
+  // 3. Union-merge messages chronologically
+  const msgMap = new Map();
+  for (const m of [...(incomingDb.messages || []), ...(baseDb.messages || [])]) {
+    if (!m?.id || deletedSet.has(m.id) || deletedSet.has(m.chatId)) continue;
+    const prev = msgMap.get(m.id);
+    if (!prev) {
+      msgMap.set(m.id, { ...m });
+    } else {
+      msgMap.set(m.id, {
+        ...prev,
+        ...m,
+        text: m.isEdited ? m.text : prev.isEdited ? prev.text : m.text || prev.text,
+        isEdited: !!(m.isEdited || prev.isEdited),
+        transcribedText: m.transcribedText || prev.transcribedText || null,
+        reactions: Object.keys(m.reactions || {}).length > 0 ? m.reactions : prev.reactions || {},
+        deletedFor: Array.from(new Set([...(prev.deletedFor || []), ...(m.deletedFor || [])])),
+      });
+    }
+  }
+  const mergedMessages = Array.from(msgMap.values()).sort(
+    (a, b) => (a.timestamp || 0) - (b.timestamp || 0)
+  );
+
+  // 4. Union-merge stories & calls
+  const storyMap = new Map();
+  for (const s of [...(incomingDb.stories || []), ...(baseDb.stories || [])]) {
+    if (s?.id && !deletedSet.has(s.id)) storyMap.set(s.id, s);
+  }
+  const mergedStories = Array.from(storyMap.values()).sort(
+    (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
+  );
+
+  const callMap = new Map();
+  for (const cl of [...(incomingDb.calls || []), ...(baseDb.calls || [])]) {
+    if (cl?.id) callMap.set(cl.id, cl);
+  }
+  const mergedCalls = Array.from(callMap.values()).sort(
+    (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
+  );
+
+  // 5. Union-merge small uploaded media blobs (avatars & voice messages <= 750KB, cap 80 most recent)
+  const combinedMedia = {
+    ...(incomingDb.mediaStore || {}),
+    ...(baseDb.mediaStore || {}),
+  };
+  const sortedMediaKeys = Object.keys(combinedMedia).sort(
+    (ka, kb) => (combinedMedia[kb]?.ts || 0) - (combinedMedia[ka]?.ts || 0)
+  );
+  const prunedMediaStore = {};
+  for (const k of sortedMediaKeys.slice(0, 80)) {
+    if (combinedMedia[k]?.b64) prunedMediaStore[k] = combinedMedia[k];
+  }
+
+  baseDb.users = mergedUsers;
+  baseDb.chats = Array.from(chatMap.values());
+  baseDb.messages = mergedMessages;
+  baseDb.stories = mergedStories;
+  baseDb.calls = mergedCalls;
+  baseDb.deletedIds = deletedIds;
+  baseDb.mediaStore = prunedMediaStore;
+
+  restoreMediaStoreFiles(baseDb);
+  return baseDb;
+}
+
+function readJsonFileSafe(filePath) {
+  try {
+    if (filePath && fs.existsSync(filePath)) {
+      let content = fs.readFileSync(filePath, 'utf-8');
       if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
-      const parsed = JSON.parse(content);
-      return parsed;
+      return JSON.parse(content);
     }
   } catch (err) {
-    console.error('Error reading DB, re-seeding:', err);
+    console.error(`Error reading DB file ${filePath}:`, err);
   }
-  const defaultData = getDefaultData();
-  saveData(defaultData);
-  return defaultData;
+  return null;
+}
+
+function loadData() {
+  const gitSeedData = readJsonFileSafe(DB_FILE);
+  const volumeData = PERSISTENT_DB_FILE ? readJsonFileSafe(PERSISTENT_DB_FILE) : null;
+
+  let loaded = gitSeedData || volumeData;
+  if (!loaded) {
+    loaded = getDefaultData();
+  } else if (gitSeedData && volumeData) {
+    loaded = mergeDatabases(volumeData, gitSeedData);
+  }
+
+  if (!loaded.deletedIds) loaded.deletedIds = [];
+  if (!loaded.mediaStore) loaded.mediaStore = {};
+
+  // Seed mediaStore with existing small files in UPLOADS_DIR / LEGACY_UPLOADS_DIR so avatars & voice notes persist
+  try {
+    for (const dir of [LEGACY_UPLOADS_DIR, UPLOADS_DIR]) {
+      if (!fs.existsSync(dir)) continue;
+      for (const fname of fs.readdirSync(dir)) {
+        const fpath = path.join(dir, fname);
+        const st = fs.statSync(fpath);
+        if (st.isFile() && st.size > 0 && st.size <= 750 * 1024 && !loaded.mediaStore[fname]) {
+          const ext = path.extname(fname).toLowerCase();
+          const mime =
+            Object.entries(MIME_EXT_MAP).find(([, e]) => e === ext)?.[0] || 'application/octet-stream';
+          loaded.mediaStore[fname] = {
+            mime,
+            b64: fs.readFileSync(fpath).toString('base64'),
+            ts: st.mtimeMs || Date.now(),
+          };
+        }
+      }
+    }
+  } catch {}
+
+  restoreMediaStoreFiles(loaded);
+  saveData(loaded);
+  return loaded;
 }
 
 function saveData(data) {
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    const serialized = JSON.stringify(data, null, 2);
+    fs.writeFileSync(DB_FILE, serialized, 'utf-8');
+    if (PERSISTENT_DB_FILE && PERSISTENT_DB_FILE !== DB_FILE) {
+      const dir = path.dirname(PERSISTENT_DB_FILE);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(PERSISTENT_DB_FILE, serialized, 'utf-8');
+    }
   } catch (err) {
     console.error('Error writing DB:', err);
+  }
+}
+
+function recordDeletedId(id) {
+  if (!id) return;
+  if (!Array.isArray(db.deletedIds)) db.deletedIds = [];
+  if (!db.deletedIds.includes(id)) {
+    db.deletedIds.push(id);
+    if (db.deletedIds.length > 3000) {
+      db.deletedIds = db.deletedIds.slice(-3000);
+    }
+  }
+}
+
+async function restoreRemoteSnapshotAndMerge() {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+    const res = await fetch(`${REMOTE_SNAPSHOT_URL}?t=${Date.now()}`, {
+      signal: controller.signal,
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return;
+    const text = await res.text();
+    const remoteDb = decryptSnapshot(text);
+    if (remoteDb && Array.isArray(remoteDb.users)) {
+      const beforeUsers = (db.users || []).length;
+      const beforeMsgs = (db.messages || []).length;
+      mergeDatabases(db, remoteDb);
+      // Enforce strict verified badge rule after merge
+      db.users.forEach((u) => {
+        u.verified = u.username?.toLowerCase() === 'admin';
+      });
+      saveData(db);
+      console.log(
+        `[DB Persistence] Restored & merged cloud snapshot: users ${beforeUsers}->${db.users.length}, messages ${beforeMsgs}->${db.messages.length}`
+      );
+    }
+  } catch (err) {
+    console.log('[DB Persistence] Remote snapshot skipped or not yet initialized:', err?.message || err);
   }
 }
 
@@ -154,6 +481,7 @@ function formatLastSeen(timestamp) {
 }
 
 let db = loadData();
+restoreRemoteSnapshotAndMerge();
 
 // Active user sockets tracking
 const userSockets = new Map(); // userId -> Set<socketId>
@@ -161,6 +489,60 @@ const socketToUser = new Map(); // socketId -> userId
 const voiceRoomScreenShares = new Map(); // chatId -> Map(sharerId -> { sharerId, sharerName })
 const recentRecordedCalls = new Map(); // sortedPairKey -> timestamp
 const activeGroupVoiceChats = new Map(); // chatId -> { startedAt, initiatorId, participants: Set<userId> }
+
+function registerUserSocket(socket, userId) {
+  if (!socket || !userId || typeof userId !== 'string') return;
+  socketToUser.set(socket.id, userId);
+  if (!userSockets.has(userId)) {
+    userSockets.set(userId, new Set());
+  }
+  userSockets.get(userId).add(socket.id);
+
+  const user = db.users.find((u) => u.id === userId);
+  if (user && !user.online) {
+    user.online = true;
+    user.lastSeen = 'в сети';
+    user.lastSeenTimestamp = null;
+    saveData(db);
+    io.emit('user_status_changed', {
+      userId,
+      online: true,
+      lastSeen: 'в сети',
+      lastSeenTimestamp: null,
+    });
+  }
+}
+
+// Cross-version real-time delivery: delivers to registered sockets AND (if a member reconnected
+// on an older app version without re-emitting user_online) also to unidentified sockets.
+// All PRITONN clients strictly filter new_message / new_chat by members.includes(myId).
+function emitToMembers(memberIds, event, payload) {
+  const uniqueMembers = Array.from(new Set((memberIds || []).filter(Boolean)));
+  const deliveredSockets = new Set();
+  let hasUnmappedMember = false;
+
+  for (const memberId of uniqueMembers) {
+    const sockets = userSockets.get(memberId);
+    if (sockets && sockets.size > 0) {
+      sockets.forEach((sId) => {
+        if (!deliveredSockets.has(sId)) {
+          deliveredSockets.add(sId);
+          io.to(sId).emit(event, payload);
+        }
+      });
+    } else if (memberId !== 'user_bot') {
+      hasUnmappedMember = true;
+    }
+  }
+
+  if (hasUnmappedMember) {
+    for (const [sId] of io.sockets.sockets) {
+      if (!socketToUser.has(sId) && !deliveredSockets.has(sId)) {
+        io.to(sId).emit(event, payload);
+      }
+    }
+  }
+}
 
 // Reset online status on server startup
 if (db.users) {
@@ -371,6 +753,28 @@ app.post('/api/upload', (req, res) => {
         originalName = Buffer.from(originalName, 'latin1').toString('utf8');
       }
     } catch {}
+
+    // Persist small media files (<= 750 KB: avatars, Opus voice notes, stickers) inside mediaStore
+    // so they survive container updates & redeployments automatically!
+    try {
+      if (req.file.size > 0 && req.file.size <= 750 * 1024 && fs.existsSync(req.file.path)) {
+        if (!db.mediaStore) db.mediaStore = {};
+        db.mediaStore[req.file.filename] = {
+          mime: req.file.mimetype || 'application/octet-stream',
+          b64: fs.readFileSync(req.file.path).toString('base64'),
+          ts: Date.now(),
+        };
+        const keys = Object.keys(db.mediaStore);
+        if (keys.length > 80) {
+          keys
+            .sort((a, b) => (db.mediaStore[b]?.ts || 0) - (db.mediaStore[a]?.ts || 0))
+            .slice(80)
+            .forEach((oldKey) => delete db.mediaStore[oldKey]);
+        }
+        saveData(db);
+      }
+    } catch {}
+
     const fileUrl = `/uploads/${req.file.filename}`;
     res.json({
       url: fileUrl,
@@ -379,6 +783,88 @@ app.post('/api/upload', (req, res) => {
       size: req.file.size
     });
   });
+});
+
+// Encrypted DB Snapshot endpoint for GitHub Actions db-state persistence sync
+app.get('/api/internal/db-snapshot', (req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send(encryptSnapshot(db));
+  } catch (err) {
+    console.error('Snapshot export error:', err);
+    res.status(500).json({ error: 'Snapshot failed' });
+  }
+});
+
+// Seamless Account Vault Auto-Restore (ensures logged-in users stay registered across updates)
+app.post('/api/auth/sync-account', (req, res) => {
+  const { id, name, username, password, phone, avatar, bio, isPremium, emojiStatus, customFolders } =
+    req.body || {};
+
+  const cleanUsername = (username || '').replace('@', '').trim().toLowerCase();
+  if (!cleanUsername || !name) {
+    return res.status(400).json({ error: 'Missing account fields' });
+  }
+
+  let user = db.users.find((u) => (id && u.id === id) || u.username.toLowerCase() === cleanUsername);
+
+  if (!user) {
+    const avatarStyles = ['adventurer', 'lorelei', 'micah', 'personas', 'notionists', 'avataaars'];
+    const hash = cleanUsername.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+    const style = avatarStyles[hash % avatarStyles.length];
+    const defaultAvatar = `https://api.dicebear.com/7.x/${style}/svg?seed=${cleanUsername}`;
+
+    user = {
+      id: id && String(id).startsWith('user_') ? String(id) : 'user_' + uuidv4(),
+      name: String(name).trim(),
+      username: cleanUsername,
+      password: password ? String(password).trim() : '',
+      phone: phone ? String(phone).trim() : '',
+      avatar: avatar || defaultAvatar,
+      bio: bio ? String(bio).trim() : 'Пользователь PRITONN',
+      verified: cleanUsername === 'admin',
+      online: true,
+      lastSeen: 'в сети',
+      isPremium: !!isPremium,
+      emojiStatus: emojiStatus || undefined,
+      customFolders: Array.isArray(customFolders) ? customFolders : [],
+    };
+    db.users.push(user);
+
+    const savedChatId = `chat_saved_${user.id}`;
+    if (!db.chats.some((c) => c.id === savedChatId || (c.type === 'saved' && c.members?.includes(user.id)))) {
+      db.chats.push({
+        id: savedChatId,
+        type: 'saved',
+        name: 'Избранное',
+        avatar: '/telegram-saved.svg',
+        members: [user.id],
+        isPinned: true,
+        createdAt: Date.now(),
+        unreadCount: 0,
+      });
+    }
+    saveData(db);
+    const { password: _, ...safeCreated } = user;
+    io.emit('user_registered', safeCreated);
+    return res.json(safeCreated);
+  }
+
+  // User already exists: verify identity matches id or password
+  if (user.id !== id && user.password && password && user.password !== String(password).trim()) {
+    return res.status(409).json({ error: 'Account conflict' });
+  }
+
+  if (!user.password && password) {
+    user.password = String(password).trim();
+  }
+  user.online = true;
+  user.lastSeen = 'в сети';
+  saveData(db);
+
+  const { password: _, ...safeExisting } = user;
+  return res.json(safeExisting);
 });
 
 // Register new user (Starts with 0 chats!)
@@ -686,7 +1172,17 @@ app.post('/api/chats/direct', (req, res) => {
 
   db.chats.push(newChat);
   saveData(db);
-  io.emit('new_chat', newChat);
+
+  // Emit personalized direct chat to each participant (and fallback for older reconnected clients)
+  [currentUserId, targetUserId].forEach((memberId) => {
+    const populatedForMember = populateDirectChat(newChat, memberId);
+    const sockets = userSockets.get(memberId);
+    if (sockets && sockets.size > 0) {
+      sockets.forEach((sId) => io.to(sId).emit('new_chat', populatedForMember));
+    }
+  });
+  emitToMembers([currentUserId, targetUserId], 'new_chat', newChat);
+
   res.status(201).json(populateDirectChat(newChat, currentUserId));
 });
 
@@ -791,12 +1287,50 @@ app.get('/api/chats/:chatId/messages', (req, res) => {
   res.json(chatMsgs);
 });
 
-// Send message (Protected: only members can post)
+// Send message (Protected: only members can post; compatible across all old & new versions)
 app.post('/api/chats/:chatId/messages', (req, res) => {
   const { chatId } = req.params;
-  const { senderId, text, mediaUrl, mediaType, isVoice, voiceDuration, replyToId } = req.body;
+  const { senderId, text, mediaUrl, mediaType, isVoice, voiceDuration, replyToId, targetUserId } = req.body;
 
-  const chat = db.chats.find(c => c.id === chatId);
+  let chat = db.chats.find(c => c.id === chatId);
+  if (!chat && senderId) {
+    if (chatId === `chat_saved_${senderId}`) {
+      chat = {
+        id: chatId,
+        type: 'saved',
+        name: 'Избранное',
+        avatar: '/telegram-saved.svg',
+        members: [senderId],
+        isPinned: true,
+        createdAt: Date.now(),
+        unreadCount: 0,
+      };
+      db.chats.push(chat);
+      saveData(db);
+    } else if (targetUserId) {
+      chat = db.chats.find(
+        (c) =>
+          c.type === 'direct' &&
+          Array.isArray(c.members) &&
+          c.members.includes(senderId) &&
+          c.members.includes(targetUserId)
+      );
+      if (!chat) {
+        chat = {
+          id: chatId.startsWith('chat_dm_') ? chatId : 'chat_dm_' + uuidv4(),
+          type: 'direct',
+          targetUserId,
+          members: [senderId, targetUserId],
+          createdAt: Date.now(),
+          isPinned: false,
+        };
+        db.chats.push(chat);
+        saveData(db);
+        emitToMembers([senderId, targetUserId], 'new_chat', chat);
+      }
+    }
+  }
+
   if (!chat) {
     return res.status(404).json({ error: 'Chat not found' });
   }
@@ -862,7 +1396,7 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
 
   const newMessage = {
     id: 'msg_' + uuidv4(),
-    chatId,
+    chatId: chat.id,
     senderId,
     text: text || '',
     mediaUrl: mediaUrl || null,
@@ -901,14 +1435,9 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
   chat.lastMessage = newMessage;
   saveData(db);
 
-  // Send message strictly to members of this chat (NEVER broadcast to unrelated users)
+  // Send message strictly to members of this chat across ALL app versions
   const recipients = Array.isArray(chat.members) && chat.members.length > 0 ? chat.members : [senderId];
-  recipients.forEach(memberId => {
-    const sockets = userSockets.get(memberId);
-    if (sockets) {
-      sockets.forEach(sId => io.to(sId).emit('new_message', newMessage));
-    }
-  });
+  emitToMembers(recipients, 'new_message', newMessage);
 
   // If chat is with the AI bot
   if (chat.type === 'bot' || chat.id.startsWith('chat_bot') || chat.targetUserId === 'user_bot') {
@@ -916,7 +1445,7 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
       const botReply = generateBotReply(text);
       const botMessage = {
         id: 'msg_' + uuidv4(),
-        chatId,
+        chatId: chat.id,
         senderId: 'user_bot',
         text: botReply.text,
         inlineKeyboard: botReply.inlineKeyboard || null,
@@ -927,12 +1456,7 @@ app.post('/api/chats/:chatId/messages', (req, res) => {
       };
       db.messages.push(botMessage);
       saveData(db);
-      recipients.forEach(memberId => {
-        const sockets = userSockets.get(memberId);
-        if (sockets) {
-          sockets.forEach(sId => io.to(sId).emit('new_message', botMessage));
-        }
-      });
+      emitToMembers(recipients, 'new_message', botMessage);
     }, 600);
   }
 
@@ -1123,6 +1647,8 @@ app.delete('/api/chats/:chatId', (req, res) => {
   const chat = db.chats[chatIndex];
 
   if (forEveryone || chat.creatorId === currentUserId || chat.type === 'saved') {
+    recordDeletedId(chatId);
+    db.messages.filter(m => m.chatId === chatId).forEach(m => recordDeletedId(m.id));
     db.chats.splice(chatIndex, 1);
     db.messages = db.messages.filter(m => m.chatId !== chatId);
     saveData(db);
@@ -1133,6 +1659,8 @@ app.delete('/api/chats/:chatId', (req, res) => {
       chat.members = chat.members.filter(id => id !== currentUserId);
       chat.membersCount = chat.members.length;
       if (chat.members.length === 0) {
+        recordDeletedId(chatId);
+        db.messages.filter(m => m.chatId === chatId).forEach(m => recordDeletedId(m.id));
         db.chats.splice(chatIndex, 1);
         db.messages = db.messages.filter(m => m.chatId !== chatId);
       }
@@ -1158,6 +1686,7 @@ app.delete('/api/messages/:id', (req, res) => {
 
   if (forEveryone) {
     // Delete for all users in the chat
+    recordDeletedId(id);
     const deleted = db.messages.splice(index, 1)[0];
     saveData(db);
     io.emit('message_deleted', { id, chatId: deleted.chatId, forEveryone: true });
@@ -1231,43 +1760,271 @@ const handleSaveChatDraft = (req, res) => {
 app.put('/api/chats/:chatId/draft', handleSaveChatDraft);
 app.post('/api/chats/:chatId/draft', handleSaveChatDraft);
 
-// Save Real Speech-to-Text Transcription on Voice/Audio Message
-app.post('/api/messages/:id/transcribe', (req, res) => {
-  const { id } = req.params;
-  const { transcribedText } = req.body || {};
-  const msg = db.messages.find(m => m.id === id);
-  if (!msg) return res.status(404).json({ error: 'Message not found' });
+// --- SERVER-SIDE WHISPER-SMALL SPEECH-TO-TEXT ENGINE (Russian ASR) ---
+let serverWhisperPromise = null;
 
-  if (typeof transcribedText === 'string' && transcribedText.trim()) {
-    msg.transcribedText = transcribedText.trim();
-    saveData(db);
+function getServerWhisperPipeline() {
+  if (!serverWhisperPromise) {
+    serverWhisperPromise = (async () => {
+      try {
+        return await pipeline('automatic-speech-recognition', 'Xenova/whisper-small', {
+          dtype: 'q8',
+        });
+      } catch (firstErr) {
+        console.warn('[ASR] Primary HuggingFace download failed, retrying via hf-mirror.com:', firstErr?.message || firstErr);
+        hfEnv.remoteHost = 'https://hf-mirror.com/';
+        return await pipeline('automatic-speech-recognition', 'Xenova/whisper-small', {
+          dtype: 'q8',
+        });
+      }
+    })().catch((err) => {
+      console.error('[ASR] Failed to initialize Xenova/whisper-small:', err);
+      serverWhisperPromise = null;
+      throw err;
+    });
+  }
+  return serverWhisperPromise;
+}
 
-    const chat = db.chats.find(c => c.id === msg.chatId);
-    const recipients = chat && Array.isArray(chat.members) && chat.members.length > 0 ? chat.members : null;
-    if (recipients) {
-      recipients.forEach(memberId => {
-        const sockets = userSockets.get(memberId);
-        if (sockets) {
-          sockets.forEach(sId => io.to(sId).emit('message_updated', msg));
-        }
-      });
-    } else {
-      io.emit('message_updated', msg);
+async function resolveAudioBufferForTranscription(mediaUrl) {
+  if (!mediaUrl || typeof mediaUrl !== 'string') {
+    throw new Error('Аудиозапись не найдена');
+  }
+  const trimmed = mediaUrl.trim();
+
+  // 1. Base64 data: URI
+  if (trimmed.startsWith('data:')) {
+    const commaIdx = trimmed.indexOf(',');
+    if (commaIdx !== -1) {
+      return {
+        buffer: Buffer.from(trimmed.slice(commaIdx + 1), 'base64'),
+        ext: '.webm',
+      };
     }
   }
-  res.json(msg);
+
+  // 2. Local /uploads/... path or full URL pointing to /uploads/...
+  const uploadsMatch = trimmed.match(/\/uploads\/([^?#]+)/);
+  if (uploadsMatch && uploadsMatch[1]) {
+    const fname = path.basename(decodeURIComponent(uploadsMatch[1]));
+    const primaryPath = path.join(UPLOADS_DIR, fname);
+    const legacyPath = path.join(LEGACY_UPLOADS_DIR, fname);
+    if (fs.existsSync(primaryPath)) {
+      return { buffer: fs.readFileSync(primaryPath), ext: path.extname(fname) || '.webm' };
+    }
+    if (fs.existsSync(legacyPath)) {
+      return { buffer: fs.readFileSync(legacyPath), ext: path.extname(fname) || '.webm' };
+    }
+    if (db?.mediaStore?.[fname]?.b64) {
+      const buf = Buffer.from(db.mediaStore[fname].b64, 'base64');
+      try {
+        fs.writeFileSync(primaryPath, buf);
+      } catch {}
+      return { buffer: buf, ext: path.extname(fname) || '.webm' };
+    }
+  }
+
+  // 3. Remote HTTP(S) URL fallback
+  if (/^https?:\/\//i.test(trimmed)) {
+    const resp = await fetch(trimmed);
+    if (!resp.ok) {
+      throw new Error(`Не удалось скачать аудиофайл (${resp.status})`);
+    }
+    const arrBuf = await resp.arrayBuffer();
+    const urlPath = new URL(trimmed).pathname;
+    return { buffer: Buffer.from(arrBuf), ext: path.extname(urlPath) || '.webm' };
+  }
+
+  throw new Error('Файл голосового сообщения недоступен на сервере');
+}
+
+function decodeAudioBufferTo16kFloat32(audioBuffer, extHint = '.webm') {
+  return new Promise((resolve, reject) => {
+    if (!ffmpegPath || !fs.existsSync(ffmpegPath)) {
+      return reject(new Error('Декодер аудио (ffmpeg) не найден на сервере'));
+    }
+    const uid = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const safeExt = extHint && /^\.[a-z0-9]{1,5}$/i.test(extHint) ? extHint : '.webm';
+    const inTmp = path.join(os.tmpdir(), `pritonn_asr_in_${uid}${safeExt}`);
+    const outTmp = path.join(os.tmpdir(), `pritonn_asr_out_${uid}.wav`);
+
+    const cleanup = () => {
+      try { if (fs.existsSync(inTmp)) fs.unlinkSync(inTmp); } catch {}
+      try { if (fs.existsSync(outTmp)) fs.unlinkSync(outTmp); } catch {}
+    };
+
+    try {
+      fs.writeFileSync(inTmp, audioBuffer);
+    } catch (e) {
+      cleanup();
+      return reject(e);
+    }
+
+    const ff = spawn(ffmpegPath, [
+      '-y',
+      '-i',
+      inTmp,
+      '-af',
+      'highpass=f=70,dynaudnorm',
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      '-f',
+      'wav',
+      outTmp,
+    ]);
+
+    let stderrText = '';
+    ff.stderr.on('data', (chunk) => {
+      stderrText += chunk.toString();
+    });
+
+    ff.on('error', (err) => {
+      cleanup();
+      reject(err);
+    });
+
+    ff.on('close', (code) => {
+      try {
+        if (code !== 0 || !fs.existsSync(outTmp)) {
+          cleanup();
+          return reject(new Error(`Ошибка декодирования звука (${code}): ${stderrText.slice(-160)}`));
+        }
+        const wavBuf = fs.readFileSync(outTmp);
+        const wav = new WaveFile(wavBuf);
+        wav.toBitDepth('32f');
+        wav.toSampleRate(16000);
+        let samples = wav.getSamples();
+        if (Array.isArray(samples)) {
+          samples = samples[0];
+        }
+        const float32 = samples instanceof Float32Array ? samples : Float32Array.from(samples);
+        cleanup();
+        resolve(float32);
+      } catch (parseErr) {
+        cleanup();
+        reject(parseErr);
+      }
+    });
+  });
+}
+
+async function transcribeMediaOnServer(mediaUrl) {
+  const { buffer, ext } = await resolveAudioBufferForTranscription(mediaUrl);
+  if (!buffer || buffer.length < 64) {
+    return '[Аудиозапись пуста]';
+  }
+  const pcm16k = await decodeAudioBufferTo16kFloat32(buffer, ext);
+  if (!pcm16k || pcm16k.length < 800) {
+    return '[Тишина — запись слишком короткая]';
+  }
+
+  let sumSq = 0;
+  for (let i = 0; i < pcm16k.length; i++) {
+    sumSq += pcm16k[i] * pcm16k[i];
+  }
+  const rms = Math.sqrt(sumSq / Math.max(1, pcm16k.length));
+  if (rms < 0.0006) {
+    return '[Тишина — речь на записи не обнаружена]';
+  }
+
+  const transcriber = await getServerWhisperPipeline();
+  const result = await transcriber(pcm16k, {
+    language: 'russian',
+    task: 'transcribe',
+    chunk_length_s: 30,
+    stride_length_s: 5,
+  });
+
+  const rawText = (typeof result === 'string' ? result : result?.text || '').trim();
+  const cleaned = rawText
+    .replace(/^\s*\[.*?\]\s*$/g, '')
+    .replace(/^\s*\(.*?\)\s*$/g, '')
+    .replace(/Редактор субтитров.*$/i, '')
+    .replace(/Субтитры сделал.*$/i, '')
+    .replace(/Субтитры создавал.*$/i, '')
+    .replace(/Продолжение следует\.{0,3}$/i, '')
+    .trim();
+
+  return cleaned || '[Речь не распознана]';
+}
+
+// Standalone server speech-to-text endpoint for direct audio URLs
+app.post('/api/transcribe-audio', async (req, res) => {
+  try {
+    const { audioUrl } = req.body || {};
+    if (!audioUrl) {
+      return res.status(400).json({ error: 'Не указан audioUrl' });
+    }
+    const text = await transcribeMediaOnServer(audioUrl);
+    res.json({ text });
+  } catch (err) {
+    console.error('[ASR] /api/transcribe-audio error:', err);
+    res.status(500).json({ error: err?.message || 'Ошибка серверного распознавания речи' });
+  }
+});
+
+// Save or Perform Real Server-Side Speech-to-Text Transcription on Voice/Audio Message
+app.post('/api/messages/:id/transcribe', async (req, res) => {
+  const { id } = req.params;
+  const { transcribedText, useServer, force, audioUrl } = req.body || {};
+  const msg = db.messages.find(m => m.id === id);
+
+  // If message isn't found in DB (e.g. local/unsaved), still transcribe if audioUrl was supplied
+  if (!msg) {
+    if (audioUrl) {
+      try {
+        const text = await transcribeMediaOnServer(audioUrl);
+        return res.json({ id, transcribedText: text });
+      } catch (err) {
+        return res.status(500).json({ error: err?.message || 'Ошибка распознавания речи' });
+      }
+    }
+    return res.status(404).json({ error: 'Message not found' });
+  }
+
+  try {
+    if (!useServer && typeof transcribedText === 'string' && transcribedText.trim()) {
+      msg.transcribedText = transcribedText.trim();
+    } else if (msg.transcribedText && !force) {
+      return res.json(msg);
+    } else {
+      const targetMedia = msg.mediaUrl || audioUrl;
+      if (!targetMedia) {
+        return res.status(400).json({ error: 'У этого сообщения нет аудиозаписи' });
+      }
+      const recognized = await transcribeMediaOnServer(targetMedia);
+      msg.transcribedText = recognized;
+    }
+
+    if (msg.transcribedText && !msg.transcribedText.startsWith('[')) {
+      saveData(db);
+      const chat = db.chats.find(c => c.id === msg.chatId);
+      const recipients = chat && Array.isArray(chat.members) && chat.members.length > 0 ? chat.members : null;
+      if (recipients) {
+        emitToMembers(recipients, 'message_updated', msg);
+      } else {
+        io.emit('message_updated', msg);
+      }
+    }
+    res.json(msg);
+  } catch (err) {
+    console.error('[ASR] Message transcription error:', err);
+    res.status(500).json({ error: err?.message || 'Ошибка распознавания речи на сервере' });
+  }
 });
 
 // App Version & In-App Updater Metadata Endpoint
 app.get('/api/app-version', (req, res) => {
-  let pkgVersion = '5.12.0';
+  let pkgVersion = '5.13.0';
   try {
     const rootPkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
     if (rootPkg && rootPkg.version) pkgVersion = rootPkg.version;
   } catch {}
   res.json({
     version: pkgVersion,
-    releaseNotes: 'PRITONN v' + pkgVersion + ' — Голосовые сообщения, ИИ-распознавание речи, фоновый режим, уведомления и автообновление.',
+    releaseNotes: 'PRITONN v' + pkgVersion + ' — Вечное сохранение аккаунтов при обновлениях, совместимость версий, точная серверная расшифровка речи и уведомление об обновлении в Настройках.',
     apkUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_v${pkgVersion}.apk`,
     winSetupUrl: `https://github.com/Whysay-music/PRITONN/releases/download/v${pkgVersion}/PRITONN_Setup_${pkgVersion}.exe`,
     releasePageUrl: 'https://github.com/Whysay-music/PRITONN/releases/latest',
@@ -1279,6 +2036,7 @@ app.post('/api/messages/:id/burn', (req, res) => {
   const { id } = req.params;
   const idx = db.messages.findIndex(m => m.id === id);
   if (idx !== -1) {
+    recordDeletedId(id);
     const deleted = db.messages.splice(idx, 1)[0];
     saveData(db);
     io.emit('message_deleted', { id, chatId: deleted.chatId, forEveryone: true });
@@ -1389,28 +2147,15 @@ app.delete('/api/users/:userId/calls', (req, res) => {
 
 // Socket.io connection
 io.on('connection', (socket) => {
-  socket.on('user_online', ({ userId }) => {
+  // Auto-register userId from Socket.IO handshake query (guarantees seamless reconnects across deploys)
+  const queryUserId = socket.handshake?.query?.userId;
+  if (typeof queryUserId === 'string' && queryUserId.trim().startsWith('user_')) {
+    registerUserSocket(socket, queryUserId.trim());
+  }
+
+  socket.on('user_online', ({ userId } = {}) => {
     if (!userId) return;
-    socketToUser.set(socket.id, userId);
-    if (!userSockets.has(userId)) {
-      userSockets.set(userId, new Set());
-    }
-    userSockets.get(userId).add(socket.id);
-
-    const user = db.users.find(u => u.id === userId);
-    if (user) {
-      user.online = true;
-      user.lastSeen = 'в сети';
-      user.lastSeenTimestamp = null;
-      saveData(db);
-
-      io.emit('user_status_changed', {
-        userId,
-        online: true,
-        lastSeen: 'в сети',
-        lastSeenTimestamp: null
-      });
-    }
+    registerUserSocket(socket, userId);
   });
 
   socket.on('user_offline', ({ userId }) => {
@@ -1533,12 +2278,7 @@ io.on('connection', (socket) => {
     saveData(db);
 
     const recipients = Array.isArray(directChat.members) && directChat.members.length > 0 ? directChat.members : [callerId, receiverId];
-    recipients.forEach(memberId => {
-      const sockets = userSockets.get(memberId);
-      if (sockets) {
-        sockets.forEach(sId => io.to(sId).emit('new_message', callMsg));
-      }
-    });
+    emitToMembers(recipients, 'new_message', callMsg);
     return callMsg;
   }
 
@@ -1578,12 +2318,7 @@ io.on('connection', (socket) => {
       chat.lastMessage = endMsg;
       saveData(db);
 
-      (chat.members || []).forEach(memberId => {
-        const mSockets = userSockets.get(memberId);
-        if (mSockets) {
-          mSockets.forEach(sId => io.to(sId).emit('new_message', endMsg));
-        }
-      });
+      emitToMembers(chat.members || [], 'new_message', endMsg);
     }
   }
 
@@ -1956,4 +2691,10 @@ app.get('*', (req, res, next) => {
 
 server.listen(PORT, () => {
   console.log(`Telegram Backend server running on http://localhost:${PORT}`);
+  // Pre-warm Whisper-small speech recognition model in background so first transcription is instant
+  setTimeout(() => {
+    getServerWhisperPipeline()
+      .then(() => console.log('[ASR] Xenova/whisper-small Russian model ready'))
+      .catch(() => {});
+  }, 4000);
 });

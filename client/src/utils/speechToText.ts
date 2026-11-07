@@ -1,14 +1,17 @@
-// Real Offline/Universal Speech-to-Text Engine for Voice & Audio Messages
-// Uses HuggingFace Transformers.js (Whisper-tiny q8 WASM) loaded dynamically on demand:
-// - Works identically in Electron Desktop, Android Capacitor WebView, and Web Browsers
-// - Requires 0 API keys, adds 0 KB to initial bundle, never steals microphone during recording
+// Universal Speech-to-Text Engine for Voice & Audio Messages
+// Primary: Fast, high-accuracy Server-Side Whisper-small (Russian) via PRITONN backend + FFmpeg
+//   - Works on Android APK, Windows PC, and Web without downloading WASM models or VPN
+//   - Accurately recognizes Russian speech from WebM/Opus, OGG, MP4/M4A, MP3, WAV
+// Fallback: Local WebAudio + Transformers.js if server ASR is unreachable
+
+import { getApiUrl } from '../config';
 
 let asrPipelinePromise: Promise<any> | null = null;
 
-const loadWhisperPipeline = async (onStatus?: (status: string) => void): Promise<any> => {
+const loadLocalWhisperFallback = async (onStatus?: (status: string) => void): Promise<any> => {
   if (!asrPipelinePromise) {
     asrPipelinePromise = (async () => {
-      onStatus?.('Загрузка языковой модели...');
+      onStatus?.('Загрузка резервной модели речи...');
       const transformersUrl =
         'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.0/dist/transformers.min.js';
       const mod: any = await import(/* @vite-ignore */ transformersUrl);
@@ -16,19 +19,14 @@ const loadWhisperPipeline = async (onStatus?: (status: string) => void): Promise
         mod.env.allowLocalModels = false;
         mod.env.useBrowserCache = true;
       }
-      const transcriber = await mod.pipeline(
-        'automatic-speech-recognition',
-        'Xenova/whisper-tiny',
-        {
-          dtype: 'q8',
-          progress_callback: (prog: any) => {
-            if (prog && prog.status === 'progress' && typeof prog.progress === 'number') {
-              onStatus?.(`Загрузка модели речи (${Math.round(prog.progress)}%)...`);
-            }
-          },
-        }
-      );
-      return transcriber;
+      return await mod.pipeline('automatic-speech-recognition', 'Xenova/whisper-small', {
+        dtype: 'q8',
+        progress_callback: (prog: any) => {
+          if (prog && prog.status === 'progress' && typeof prog.progress === 'number') {
+            onStatus?.(`Загрузка модели (${Math.round(prog.progress)}%)...`);
+          }
+        },
+      });
     })().catch((err) => {
       asrPipelinePromise = null;
       throw err;
@@ -78,7 +76,6 @@ const decodeAudioTo16kHzMono = async (audioUrl: string): Promise<Float32Array> =
     return rendered.getChannelData(0);
   }
 
-  // Fallback linear resampling if OfflineAudioContext is unavailable
   const srcData = decodedBuffer.getChannelData(0);
   const ratio = decodedBuffer.sampleRate / targetSampleRate;
   const out = new Float32Array(targetLength);
@@ -91,26 +88,74 @@ const decodeAudioTo16kHzMono = async (audioUrl: string): Promise<Float32Array> =
 
 export const transcribeAudioUrl = async (
   audioUrl: string,
-  onStatus?: (status: string) => void
+  onStatus?: (status: string) => void,
+  messageId?: string
 ): Promise<string> => {
   if (!audioUrl || !audioUrl.trim()) {
     return 'Нет аудиозаписи для распознавания.';
   }
 
+  const apiBase = getApiUrl();
+
+  // 1. Primary: High-accuracy server-side Russian speech recognition (Xenova/whisper-small + FFmpeg)
+  try {
+    onStatus?.('Распознавание речи на сервере...');
+    const endpoint = messageId
+      ? `${apiBase}/api/messages/${encodeURIComponent(messageId)}/transcribe`
+      : `${apiBase}/api/transcribe-audio`;
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        useServer: true,
+        audioUrl,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const serverText = (data?.transcribedText || data?.text || '').trim();
+      if (serverText) {
+        return serverText;
+      }
+    }
+  } catch {
+    // Fall through to standalone endpoint or local fallback
+  }
+
+  // Secondary check via /api/transcribe-audio if messageId wasn't found on server yet
+  if (messageId) {
+    try {
+      const res2 = await fetch(`${apiBase}/api/transcribe-audio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audioUrl }),
+      });
+      if (res2.ok) {
+        const data2 = await res2.json();
+        const serverText2 = (data2?.text || '').trim();
+        if (serverText2) {
+          return serverText2;
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Fallback: Local browser decoding + Whisper if server is offline
   onStatus?.('Обработка звука...');
   const pcm16k = await decodeAudioTo16kHzMono(audioUrl);
 
-  // Check RMS energy so completely silent recordings report clearly instead of hallucinating
   let sumSq = 0;
   for (let i = 0; i < pcm16k.length; i++) {
     sumSq += pcm16k[i] * pcm16k[i];
   }
   const rms = Math.sqrt(sumSq / Math.max(1, pcm16k.length));
-  if (rms < 0.0008) {
+  if (rms < 0.0006) {
     return '[Тишина — речь на записи не обнаружена]';
   }
 
-  const transcriber = await loadWhisperPipeline(onStatus);
+  const transcriber = await loadLocalWhisperFallback(onStatus);
   onStatus?.('Распознавание речи...');
 
   const output = await transcriber(pcm16k, {
@@ -121,17 +166,11 @@ export const transcribeAudioUrl = async (
   });
 
   const rawText = (typeof output === 'string' ? output : output?.text || '').trim();
-
-  // Filter out common Whisper silence artifacts like "(субтитры)" or "[музыка]" if empty speech
   const cleaned = rawText
     .replace(/^\s*\[.*?\]\s*$/g, '')
     .replace(/Редактор субтитров.*$/i, '')
     .replace(/Субтитры сделал.*$/i, '')
     .trim();
 
-  if (!cleaned) {
-    return '[Речь не распознана]';
-  }
-
-  return cleaned;
+  return cleaned || '[Речь не распознана]';
 };

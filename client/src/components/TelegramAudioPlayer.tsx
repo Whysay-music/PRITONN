@@ -4,6 +4,7 @@ import { resolveMediaUrl } from '../utils/avatar';
 import { transcribeAudioUrl } from '../utils/speechToText';
 
 interface TelegramAudioPlayerProps {
+  messageId?: string;
   src: string;
   title?: string | null;
   fileSize?: string | null;
@@ -15,6 +16,7 @@ interface TelegramAudioPlayerProps {
 }
 
 export const TelegramAudioPlayer: React.FC<TelegramAudioPlayerProps> = ({
+  messageId,
   src,
   title,
   fileSize,
@@ -103,7 +105,7 @@ export const TelegramAudioPlayer: React.FC<TelegramAudioPlayerProps> = ({
     }
     setIsTranscribing(true);
     try {
-      const recognized = await transcribeAudioUrl(resolvedSrc);
+      const recognized = await transcribeAudioUrl(resolvedSrc, undefined, messageId);
       setLocalTranscribed(recognized);
       if (onSaveTranscription && recognized && !recognized.startsWith('[')) {
         onSaveTranscription(recognized);

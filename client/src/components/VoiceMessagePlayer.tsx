@@ -4,6 +4,7 @@ import { resolveMediaUrl } from '../utils/avatar';
 import { transcribeAudioUrl } from '../utils/speechToText';
 
 interface VoiceMessagePlayerProps {
+  messageId?: string;
   src?: string | null;
   duration?: number;
   isOutgoing?: boolean;
@@ -13,6 +14,7 @@ interface VoiceMessagePlayerProps {
 }
 
 export const VoiceMessagePlayer: React.FC<VoiceMessagePlayerProps> = ({
+  messageId,
   src,
   duration = 1,
   isOutgoing = false,
@@ -213,7 +215,11 @@ export const VoiceMessagePlayer: React.FC<VoiceMessagePlayerProps> = ({
     setIsTranscribing(true);
     setTranscribeStatus('Распознавание речи...');
     try {
-      const recognized = await transcribeAudioUrl(resolvedSrc, (st) => setTranscribeStatus(st));
+      const recognized = await transcribeAudioUrl(
+        resolvedSrc,
+        (st) => setTranscribeStatus(st),
+        messageId
+      );
       setLocalTranscribed(recognized);
       setShowTranscription(true);
       if (

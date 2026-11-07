@@ -25,7 +25,7 @@ import { CallHistoryModal } from './components/CallHistoryModal';
 import { AppLockModal } from './components/AppLockModal';
 import { GlobalMusicPlayer, AudioTrack } from './components/GlobalMusicPlayer';
 import { soundEffects } from './utils/sound';
-import { API_BASE_URL } from './config';
+import { API_BASE_URL, APP_VERSION } from './config';
 import { getAvatarUrl } from './utils/avatar';
 import { setChatDraft } from './utils/drafts';
 import {
@@ -86,11 +86,26 @@ export const App: React.FC = () => {
       checkForAppUpdate()
         .then((info) => {
           setUpdateInfo(info);
+          if (info.hasUpdate && info.latestVersion) {
+            const lastNotifiedVer = localStorage.getItem('pritonn_notified_update_ver');
+            if (lastNotifiedVer !== info.latestVersion) {
+              localStorage.setItem('pritonn_notified_update_ver', info.latestVersion);
+              setIsUpdateDismissed(false);
+              if (areNotificationsEnabled()) {
+                showAppNotification({
+                  title: `🚀 Вышло обновление PRITONN v${info.latestVersion}`,
+                  body: 'Доступно новое обновление в Настройках! Откройте Настройки, чтобы обновить приложение.',
+                  tag: `update_${info.latestVersion}`,
+                  isCall: false,
+                });
+              }
+            }
+          }
         })
         .catch(() => {});
     };
     runUpdateCheck();
-    const updateTimer = setInterval(runUpdateCheck, 10 * 60 * 1000);
+    const updateTimer = setInterval(runUpdateCheck, 3 * 60 * 1000);
     return () => clearInterval(updateTimer);
   }, []);
 
@@ -245,7 +260,7 @@ export const App: React.FC = () => {
     isInfoDrawerOpen,
   ]);
 
-  // Connect to Socket.io once and keep connection alive
+  // Connect to Socket.io once and keep connection alive across server updates
   useEffect(() => {
     const socket = io(API_BASE_URL, {
       reconnection: true,
@@ -253,12 +268,17 @@ export const App: React.FC = () => {
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       transports: ['websocket', 'polling'],
+      query: {
+        userId: localStorage.getItem('tg_user_id') || '',
+        appVersion: APP_VERSION,
+      },
     });
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      if (currentUserRef.current?.id) {
-        socket.emit('user_online', { userId: currentUserRef.current.id });
+      const uid = currentUserRef.current?.id || localStorage.getItem('tg_user_id');
+      if (uid) {
+        socket.emit('user_online', { userId: uid });
       }
     });
 
@@ -604,24 +624,81 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Inform server when current user comes online
+  // Inform server when current user comes online & keep handshake query synced for auto-reconnects
   useEffect(() => {
     if (currentUser?.id && socketRef.current) {
+      try {
+        (socketRef.current.io.opts as any).query = {
+          userId: currentUser.id,
+          appVersion: APP_VERSION,
+        };
+      } catch {}
       socketRef.current.emit('user_online', { userId: currentUser.id });
     }
   }, [currentUser?.id]);
 
-  // Load initial data for user
-  const loadUserData = async (userId: string) => {
+  const readSavedAccountVault = (): any | null => {
     try {
-      const [userRes, allUsersRes, chatsRes, storiesRes] = await Promise.all([
+      const raw = localStorage.getItem('tg_user_backup');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeSavedAccountVault = (userObj: User) => {
+    try {
+      const prev = readSavedAccountVault();
+      const preservedPassword = prev && prev.id === userObj.id ? prev.password : prev?.password;
+      localStorage.setItem(
+        'tg_user_backup',
+        JSON.stringify({
+          ...prev,
+          ...userObj,
+          ...(preservedPassword ? { password: preservedPassword } : {}),
+        })
+      );
+    } catch {}
+  };
+
+  // Load initial data for user (with seamless account auto-restore across server updates)
+  const loadUserData = async (userId: string) => {
+    const vault = readSavedAccountVault();
+    try {
+      let [userRes, allUsersRes, chatsRes, storiesRes] = await Promise.all([
         fetch(`${API_BASE_URL}/api/me?userId=${userId}`),
         fetch(`${API_BASE_URL}/api/users`),
         fetch(`${API_BASE_URL}/api/chats?userId=${userId}`),
         fetch(`${API_BASE_URL}/api/stories`),
       ]);
 
+      // If server restarted or redeployed and account needs auto-restoration from local vault
+      if (userRes.status === 404 && vault && vault.username) {
+        const syncRes = await fetch(`${API_BASE_URL}/api/auth/sync-account`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(vault),
+        });
+        if (syncRes.ok) {
+          const syncedUser = await syncRes.json();
+          if (syncedUser?.id) {
+            localStorage.setItem('tg_user_id', syncedUser.id);
+            [userRes, allUsersRes, chatsRes] = await Promise.all([
+              fetch(`${API_BASE_URL}/api/me?userId=${syncedUser.id}`),
+              fetch(`${API_BASE_URL}/api/users`),
+              fetch(`${API_BASE_URL}/api/chats?userId=${syncedUser.id}`),
+            ]);
+          }
+        }
+      }
+
       if (!userRes.ok) {
+        // Temporary 502/503 during Railway deploy: keep user logged in from vault and retry!
+        if (userRes.status >= 500 && vault) {
+          setCurrentUser(vault);
+          setTimeout(() => loadUserData(userId), 4000);
+          return;
+        }
         localStorage.removeItem('tg_user_id');
         setCurrentUser(null);
         setIsInitializing(false);
@@ -633,6 +710,7 @@ export const App: React.FC = () => {
       const chs = await chatsRes.json();
       const sts = await storiesRes.json();
 
+      writeSavedAccountVault(user);
       setCurrentUser(user);
       setAllUsers(allU);
       setChats(chs);
@@ -647,6 +725,11 @@ export const App: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to load user data:', err);
+      // Network offline or server restarting: preserve session via vault instead of logging out!
+      if (vault && vault.id) {
+        setCurrentUser((curr) => curr || vault);
+        setTimeout(() => loadUserData(userId), 5000);
+      }
     } finally {
       setIsInitializing(false);
     }
@@ -657,7 +740,7 @@ export const App: React.FC = () => {
     fetch(`${API_BASE_URL}/api/users`)
       .then((res) => res.json())
       .then((users) => {
-        setAllUsers(users);
+        if (Array.isArray(users)) setAllUsers(users);
         if (savedUserId) {
           loadUserData(savedUserId);
         } else {
@@ -665,13 +748,18 @@ export const App: React.FC = () => {
         }
       })
       .catch(() => {
-        setIsInitializing(false);
+        if (savedUserId) {
+          loadUserData(savedUserId);
+        } else {
+          setIsInitializing(false);
+        }
       });
   }, []);
 
   // Login handler
   const handleLoginSuccess = (user: User) => {
     localStorage.setItem('tg_user_id', user.id);
+    writeSavedAccountVault(user);
     setCurrentUser(user);
     loadUserData(user.id);
   };
@@ -682,6 +770,7 @@ export const App: React.FC = () => {
       socketRef.current.emit('user_offline', { userId: currentUser.id });
     }
     localStorage.removeItem('tg_user_id');
+    localStorage.removeItem('tg_user_backup');
     setCurrentUser(null);
     setActiveChat(null);
     setChats([]);
@@ -815,6 +904,10 @@ export const App: React.FC = () => {
     }
 
     const targetChatId = activeChat.id;
+    const directPartnerId =
+      activeChat.type === 'direct'
+        ? activeChat.members?.find((id) => id !== currentUser.id) || activeChat.targetUserId
+        : undefined;
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/chats/${targetChatId}/messages`, {
@@ -822,16 +915,22 @@ export const App: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           senderId: currentUser.id,
+          targetUserId: directPartnerId,
           ...data,
         }),
       });
       if (res.ok) {
         const savedMsg: Message = await res.json();
-        if (activeChatRef.current?.id === targetChatId) {
+        const effectiveChatId = savedMsg.chatId || targetChatId;
+        if (activeChatRef.current?.id === targetChatId || activeChatRef.current?.id === effectiveChatId) {
           setMessages((prev) => (prev.some((m) => m.id === savedMsg.id) ? prev : [...prev, savedMsg]));
         }
         setChats((prev) =>
-          prev.map((c) => (c.id === targetChatId ? { ...c, lastMessage: savedMsg } : c))
+          prev.map((c) =>
+            c.id === targetChatId || c.id === effectiveChatId
+              ? { ...c, id: effectiveChatId, lastMessage: savedMsg }
+              : c
+          )
         );
       } else {
         const errData = await res.json().catch(() => ({}));
@@ -1096,8 +1195,11 @@ export const App: React.FC = () => {
           ...updated,
         }),
       });
-      const u = await res.json();
-      setCurrentUser(u);
+      if (res.ok) {
+        const u = await res.json();
+        setCurrentUser(u);
+        writeSavedAccountVault(u);
+      }
     } catch (err) {
       console.error('Error updating profile:', err);
     }
@@ -1260,11 +1362,13 @@ export const App: React.FC = () => {
         <DesktopTitleBar activeChat={activeChat} currentUser={currentUser} allUsers={allUsers} />
       </div>
 
-      {/* In-App Software Update Banner */}
+      {/* In-App Software Update Notification pointing to Settings */}
       {updateInfo?.hasUpdate && !isUpdateDismissed && (
-        <div className="bg-gradient-to-r from-[#2481cc] to-indigo-600 text-white px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-2 shadow-lg z-40">
+        <div className="bg-gradient-to-r from-[#2481cc] via-blue-600 to-indigo-600 text-white px-4 py-2.5 text-xs flex flex-wrap items-center justify-between gap-2 shadow-lg z-40 border-b border-white/15">
           <div className="flex items-center gap-2 font-medium">
-            <span>🚀 Доступно обновление PRITONN v{updateInfo.latestVersion}!</span>
+            <span>
+              🔔 Вышло обновление <b>PRITONN v{updateInfo.latestVersion}</b>! Обновление доступно в <b>Настройках</b>.
+            </span>
             {isInstallingUpdate && (
               <span className="text-blue-100 font-mono">
                 ({updateStatusText || `${updateProgress}%`})
@@ -1274,11 +1378,18 @@ export const App: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => setIsSettingsOpen(true)}
+              className="px-3 py-1 rounded-lg bg-white text-blue-700 font-bold hover:bg-blue-50 transition cursor-pointer shadow-sm"
+            >
+              Открыть Настройки
+            </button>
+            <button
+              type="button"
               disabled={isInstallingUpdate}
               onClick={handleTriggerInAppUpdate}
-              className="px-3 py-1 rounded-lg bg-white text-blue-700 font-bold hover:bg-blue-50 transition cursor-pointer disabled:opacity-60"
+              className="px-3 py-1 rounded-lg bg-white/15 hover:bg-white/25 border border-white/30 text-white font-semibold transition cursor-pointer disabled:opacity-60"
             >
-              {isInstallingUpdate ? `Загрузка ${updateProgress}%...` : 'Обновить сейчас'}
+              {isInstallingUpdate ? `Загрузка ${updateProgress}%...` : 'Обновить сразу'}
             </button>
             {!isInstallingUpdate && (
               <button
@@ -1337,6 +1448,7 @@ export const App: React.FC = () => {
             activeTab={activeTab}
             chats={chats}
             currentUser={currentUser}
+            hasUpdateAvailable={!!updateInfo?.hasUpdate}
             onSelectTab={(tab) => setActiveTab(tab)}
             onOpenSavedMessages={handleOpenSavedMessages}
             onOpenSettings={() => setIsSettingsOpen(true)}
@@ -1377,6 +1489,7 @@ export const App: React.FC = () => {
             onRequestDeleteChat={(c) => setChatToDelete(c)}
             onLockApp={() => setIsAppLocked(true)}
             isAppLockEnabled={isAppLockEnabled}
+            hasUpdateAvailable={!!updateInfo?.hasUpdate}
           />
         </div>
 
@@ -1641,6 +1754,7 @@ export const App: React.FC = () => {
         isOpen={isMainMenuOpen}
         currentUser={currentUser}
         isDark={isDark}
+        hasUpdateAvailable={!!updateInfo?.hasUpdate}
         onClose={() => setIsMainMenuOpen(false)}
         onOpenSettingsModal={() => setIsSettingsOpen(true)}
         onOpenNewGroup={() => setIsNewChatOpen(true)}

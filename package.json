@@ -1,13 +1,13 @@
 {
   "name": "pritonn-messenger",
-  "version": "5.12.0",
+  "version": "5.13.0",
   "description": "PRITONN — бесплатная социальная сеть и мессенджер с видеозвонками",
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
-    "build": "cd client && npm install && npm run build && cd ../server && npm install",
+    "build": "cd client && npm install && npm run build && cd ../server && npm install && node ensure-asr-deps.js",
     "build:client": "cd client && npm install && npm run build",
-    "build:server": "cd server && npm install",
+    "build:server": "cd server && npm install && node ensure-asr-deps.js",
     "host": "npx localtunnel --port 4000",
     "dev": "concurrently \"cd server && node server.js\" \"cd client && npm run dev\""
   },

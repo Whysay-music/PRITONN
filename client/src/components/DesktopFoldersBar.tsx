@@ -18,6 +18,7 @@ interface DesktopFoldersBarProps {
   activeTab: string;
   chats: Chat[];
   currentUser?: UserType | null;
+  hasUpdateAvailable?: boolean;
   onSelectTab: (tab: string) => void;
   onOpenSavedMessages: () => void;
   onOpenSettings: () => void;
@@ -31,6 +32,7 @@ export const DesktopFoldersBar: React.FC<DesktopFoldersBarProps> = ({
   activeTab,
   chats,
   currentUser,
+  hasUpdateAvailable = false,
   onSelectTab,
   onOpenSavedMessages,
   onOpenSettings,
@@ -100,12 +102,15 @@ export const DesktopFoldersBar: React.FC<DesktopFoldersBarProps> = ({
       <button
         type="button"
         onClick={onOpenMenu}
-        className="w-10 h-10 rounded-xl flex flex-col items-center justify-center gap-[3.5px] text-[#7f91a4] hover:text-[#f5f5f5] hover:bg-[#17212b] active:scale-95 transition mb-2 cursor-pointer"
-        title="Главное меню"
+        className="relative w-10 h-10 rounded-xl flex flex-col items-center justify-center gap-[3.5px] text-[#7f91a4] hover:text-[#f5f5f5] hover:bg-[#17212b] active:scale-95 transition mb-2 cursor-pointer"
+        title={hasUpdateAvailable ? 'Главное меню (Доступно обновление в Настройках!)' : 'Главное меню'}
       >
         <span className="w-[18px] h-[2px] bg-current rounded-full" />
         <span className="w-[18px] h-[2px] bg-current rounded-full" />
         <span className="w-[18px] h-[2px] bg-current rounded-full" />
+        {hasUpdateAvailable && (
+          <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-[#0e1621] animate-pulse" />
+        )}
       </button>
 
       {/* Standard Folder items */}
@@ -206,10 +211,13 @@ export const DesktopFoldersBar: React.FC<DesktopFoldersBarProps> = ({
         <button
           type="button"
           onClick={onOpenSettings}
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-[#7f91a4] hover:text-[#f5f5f5] hover:bg-[#17212b] transition cursor-pointer"
-          title="Настройки PRITONN"
+          className="relative w-10 h-10 rounded-xl flex items-center justify-center text-[#7f91a4] hover:text-[#f5f5f5] hover:bg-[#17212b] transition cursor-pointer"
+          title={hasUpdateAvailable ? 'Настройки PRITONN — доступно обновление!' : 'Настройки PRITONN'}
         >
           <Settings size={18} />
+          {hasUpdateAvailable && (
+            <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-[#0e1621] animate-pulse" />
+          )}
         </button>
       </div>
     </div>

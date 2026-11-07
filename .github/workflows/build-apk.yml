@@ -9,6 +9,31 @@ permissions:
   contents: write
 
 jobs:
+  snapshot-db:
+    name: Pre-Deploy Cloud DB Backup
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Snapshot Live Production DB to db-state Branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SNAP=$(curl -fsSL --max-time 8 "https://pritonn-production.up.railway.app/api/internal/db-snapshot" || true)
+          if [ -n "$SNAP" ] && echo "$SNAP" | grep -q ":"; then
+            mkdir -p /tmp/dbstate && cd /tmp/dbstate
+            git init
+            git config user.name "pritonn-db-bot"
+            git config user.email "bot@pritonn.app"
+            git checkout --orphan db-state
+            printf "%s" "$SNAP" > db-snapshot.enc
+            git add db-snapshot.enc
+            git commit -m "chore(db): pre-deploy encrypted snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" db-state
+            echo "Live DB snapshot saved to db-state!"
+          else
+            echo "Snapshot endpoint not yet active on old container; skipping."
+          fi
+
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
@@ -50,31 +75,28 @@ jobs:
 
       - name: Rename APK
         run: |
-          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.12.0.apk
+          cp client/android/app/build/outputs/apk/debug/app-debug.apk PRITONN_v5.13.0.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: PRITONN-Android-APK
-          path: PRITONN_v5.12.0.apk
+          path: PRITONN_v5.13.0.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/heads/main')
         with:
-          tag_name: v5.12.0
-          name: PRITONN v5.12.0 (Voice Messages, Real Speech-to-Text, Private Drafts, Background Mode, Notifications & In-App Updater)
+          tag_name: v5.13.0
+          name: PRITONN v5.13.0 (Persistent User Database, Cross-Version Chat, Server Whisper Speech-to-Text & Settings Update Alerts)
           body: |
-            ## 🟣 PRITONN Messenger v5.12.0 — Голосовые сообщения, ИИ-распознавание речи, Фоновый режим, Уведомления и Автообновление!
+            ## 🟣 PRITONN Messenger v5.13.0 — Сохранение аккаунтов при обновлениях, Переписка между версиями, Точная расшифровка речи и Уведомление об обновлении в Настройках!
             
-            ### Исправления и нововведения в версии 5.12.0:
-            - 📝 **Приватные черновики без утечек и повторов**: Неотправленный текст в поле ввода хранится строго локально только у автора (никогда не отображается у других участников чата) и гарантированно очищается после отправки — больше не появляется повторно при переключении чатов.
-            - 🎙 **Реальная запись голосовых сообщений**: Захват голоса с микрофона (`MediaRecorder` + шумоподавление и живой индикатор уровня сигнала) и загрузка на сервер.
-            - 🔊 **Полноценное воспроизведение голосовых сообщений**: Настоящий аудиоплеер (`<audio>`) со звуком, перемоткой по волне и ускорением `1x / 1.5x / 2x`.
-            - 🧠 **Реальное распознавание речи (Voice-to-Text `→A`)**: Распознавание записанной русской речи нейросетью Whisper прямо из аудиофайла без заготовленных фраз.
-            - 🔄 **Работа в фоновом режиме**: Нативная служба `KeepAliveService` (`remoteMessaging` + `WakeLock`/`WifiLock`) на Android и фоновый режим в системном трее без троттлинга на ПК (Windows).
-            - 🔔 **Уведомления о сообщениях и звонках + тумблер отключения**: Системные уведомления на Android, Windows и в браузере с возможностью полностью выключить уведомления и звуки в **Настройках**.
-            - 🚀 **Обновление программы прямо внутри приложения**: Автоматическая проверка новых версий и скачивание + установка обновления в один клик внутри Android APK и Windows PC!
-          files: PRITONN_v5.12.0.apk
+            ### Исправления и нововведения в версии 5.13.0:
+            - 🛡️ **Вечное сохранение зарегистрированных пользователей и чатов**: Трёхуровневая система облачного бэкапа (`db-state` AES-256 + аддитивное объединение базы + авто-восстановление сессии `sync-account`) гарантирует, что аккаунты, чаты, сообщения, аватарки и голосовые никогда не удаляются при обновлениях сервера.
+            - 🔄 **Полная совместимость переписки старых и новых версий**: Пользователи предыдущих версий и новой версии `v5.13.0` мгновенно обмениваются сообщениями, голосовыми и звонками в реальном времени без потерь при переподключении.
+            - 🎙 **Точная серверная расшифровка русской речи (`→A`)**: Распознавание голосовых и аудиосообщений перенесено на серверный движок `Whisper-small` + `FFmpeg` (16 кГц с фильтрацией шума) — работает быстро и точно на Android, ПК и в РФ без загрузки тяжёлых моделей на телефон.
+            - 🔔 **Оповещение о доступном обновлении в Настройках**: При выходе новой версии приходит системное уведомление, информационная панель с кнопкой **«Открыть Настройки»** и индикатор **`ОБНОВЛЕНИЕ`** на пункте меню «Настройки».
+          files: PRITONN_v5.13.0.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

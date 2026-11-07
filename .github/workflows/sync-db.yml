@@ -1,0 +1,34 @@
+name: Sync Persistent DB Snapshot
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Backup Live DB Snapshot to db-state
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Encrypted Snapshot & Push to db-state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SNAP=$(curl -fsSL --max-time 12 "https://pritonn-production.up.railway.app/api/internal/db-snapshot" || true)
+          if [ -n "$SNAP" ] && echo "$SNAP" | grep -q ":"; then
+            mkdir -p /tmp/dbstate && cd /tmp/dbstate
+            git init
+            git config user.name "pritonn-db-bot"
+            git config user.email "bot@pritonn.app"
+            git checkout --orphan db-state
+            printf "%s" "$SNAP" > db-snapshot.enc
+            git add db-snapshot.enc
+            git commit -m "chore(db): periodic encrypted snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" db-state
+            echo "Periodic DB snapshot synced!"
+          else
+            echo "No valid snapshot returned."
+          fi

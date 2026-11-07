@@ -143,7 +143,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       if (!data) {
         throw new Error('Сервер вернул некорректный ответ. Проверьте адрес сервера');
       }
-
+      try {
+        localStorage.setItem(
+          'tg_user_backup',
+          JSON.stringify({ ...data, password: password.trim() })
+        );
+      } catch {}
       onLoginSuccess(data);
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -209,7 +214,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       if (!data) {
         throw new Error('Сервер вернул некорректный ответ. Проверьте адрес сервера');
       }
-
+      try {
+        localStorage.setItem(
+          'tg_user_backup',
+          JSON.stringify({ ...data, password: loginPassword.trim() })
+        );
+      } catch {}
       onLoginSuccess(data);
     } catch (err: unknown) {
       if (err instanceof Error) {

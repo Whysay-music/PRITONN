@@ -28,4 +28,8 @@ PRITONN-GitHub-Ready.zip
 *.zip
 PC_INSTALLER/
 ANDROID_APK/
+server/.hf-cache/
+server/uploads/*.apk
+server/uploads/*.exe
+
 

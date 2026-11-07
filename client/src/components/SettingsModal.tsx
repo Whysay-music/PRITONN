@@ -243,6 +243,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="p-5 overflow-y-auto flex flex-col gap-4">
+          {/* Top Alert if New App Update is Available */}
+          {updateCheckResult?.hasUpdate && (
+            <div className="p-3.5 rounded-xl bg-gradient-to-r from-[#2481cc]/20 to-indigo-600/20 border border-[#3390ec]/50 flex flex-col gap-2 shadow-md">
+              <div className="text-xs font-bold text-[#3390ec] flex items-center justify-between gap-2">
+                <span>🚀 Доступно обновление PRITONN v{updateCheckResult.latestVersion}!</span>
+                <span className="text-[10px] bg-[#3390ec] text-white px-2 py-0.5 rounded-full">НОВОЕ</span>
+              </div>
+              <div className="text-[11px] text-[var(--tg-text-muted)]">
+                Нажмите кнопку ниже, чтобы скачать и установить новую версию прямо сейчас.
+              </div>
+              {installingUpdate && (
+                <div className="w-full bg-black/30 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-[#3390ec] h-full transition-all duration-150"
+                    style={{ width: `${Math.max(4, updateProgress)}%` }}
+                  />
+                </div>
+              )}
+              {updateStatusMsg && (
+                <div className="text-[11px] text-[var(--tg-text)] font-medium">{updateStatusMsg}</div>
+              )}
+              <button
+                type="button"
+                disabled={installingUpdate}
+                onClick={handleInstallUpdateNow}
+                className="w-full py-2 rounded-xl bg-[#3390ec] hover:bg-blue-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow cursor-pointer transition disabled:opacity-60"
+              >
+                <Download size={14} />
+                <span>
+                  {installingUpdate
+                    ? `Скачивание ${updateProgress}%...`
+                    : `Обновить до v${updateCheckResult.latestVersion}`}
+                </span>
+              </button>
+            </div>
+          )}
+
           {/* Avatar Upload Container */}
           <div className="flex flex-col items-center gap-2">
             <input

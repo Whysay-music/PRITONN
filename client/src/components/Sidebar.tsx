@@ -63,6 +63,7 @@ interface SidebarProps {
   onSelectStory: (story: Story) => void;
   onLockApp?: () => void;
   isAppLockEnabled?: boolean;
+  hasUpdateAvailable?: boolean;
   onCreateStory: () => void;
   onRequestDeleteChat?: (chat: Chat) => void;
 }
@@ -96,6 +97,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onRequestDeleteChat,
   onLockApp,
   isAppLockEnabled,
+  hasUpdateAvailable = false,
 }) => {
   const [localTab, setLocalTab] = useState<string>('all');
   const activeTab = propActiveTab || localTab;
@@ -266,13 +268,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           type="button"
           onClick={onToggleMenu}
-          className="w-9 h-9 rounded-full flex flex-col items-center justify-center gap-[3.5px] text-[var(--tg-text-muted)] hover:text-[var(--tg-text)] hover:bg-[var(--tg-surface-hover)] active:scale-95 transition flex-shrink-0 cursor-pointer"
-          title="Главное меню"
+          className="relative w-9 h-9 rounded-full flex flex-col items-center justify-center gap-[3.5px] text-[var(--tg-text-muted)] hover:text-[var(--tg-text)] hover:bg-[var(--tg-surface-hover)] active:scale-95 transition flex-shrink-0 cursor-pointer"
+          title={hasUpdateAvailable ? 'Главное меню (Доступно обновление в Настройках!)' : 'Главное меню'}
           aria-label="Главное меню"
         >
           <span className="w-[18px] h-[2px] bg-current rounded-full transition-all" />
           <span className="w-[18px] h-[2px] bg-current rounded-full transition-all" />
           <span className="w-[18px] h-[2px] bg-current rounded-full transition-all" />
+          {hasUpdateAvailable && (
+            <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-[var(--tg-sidebar)] animate-pulse" />
+          )}
         </button>
 
         {/* Search Bar */}

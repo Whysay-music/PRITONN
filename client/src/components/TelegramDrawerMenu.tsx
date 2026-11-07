@@ -18,11 +18,13 @@ import { TelegramVerifiedBadge } from './TelegramVerifiedBadge';
 import { TelegramPremiumBadge } from './TelegramPremiumBadge';
 import { isUserVerified } from '../utils/verified';
 import { getAvatarUrl, handleAvatarError } from '../utils/avatar';
+import { APP_VERSION } from '../config';
 
 interface TelegramDrawerMenuProps {
   isOpen: boolean;
   currentUser: User;
   isDark: boolean;
+  hasUpdateAvailable?: boolean;
   onClose: () => void;
   onOpenSettingsModal: () => void;
   onOpenNewGroup: () => void;
@@ -39,6 +41,7 @@ export const TelegramDrawerMenu: React.FC<TelegramDrawerMenuProps> = ({
   isOpen,
   currentUser,
   isDark,
+  hasUpdateAvailable = false,
   onClose,
   onOpenSettingsModal,
   onOpenNewGroup,
@@ -251,10 +254,17 @@ export const TelegramDrawerMenu: React.FC<TelegramDrawerMenuProps> = ({
               onClose();
               onOpenSettingsModal();
             }}
-            className="flex items-center gap-3.5 px-3 py-2.5 rounded-xl hover:bg-[var(--tg-surface-hover)] transition text-sm font-medium text-[var(--tg-text)] cursor-pointer text-left"
+            className="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-[var(--tg-surface-hover)] transition text-sm font-medium text-[var(--tg-text)] cursor-pointer text-left"
           >
-            <Settings size={18} className="text-[#7f91a4] flex-shrink-0" />
-            <span>Настройки</span>
+            <div className="flex items-center gap-3.5">
+              <Settings size={18} className={hasUpdateAvailable ? 'text-rose-400 flex-shrink-0' : 'text-[#7f91a4] flex-shrink-0'} />
+              <span>Настройки</span>
+            </div>
+            {hasUpdateAvailable && (
+              <span className="text-[10px] bg-rose-500 text-white px-2 py-0.5 rounded-full font-bold animate-pulse">
+                ОБНОВЛЕНИЕ
+              </span>
+            )}
           </button>
 
           {/* Night Mode toggle row */}
@@ -297,7 +307,7 @@ export const TelegramDrawerMenu: React.FC<TelegramDrawerMenuProps> = ({
               className="w-7 h-7 rounded-full object-cover border border-[#2b5278] flex-shrink-0"
             />
             <div>
-              <div className="font-semibold text-[var(--tg-text)] leading-tight">PRITONN v5.8.3</div>
+              <div className="font-semibold text-[var(--tg-text)] leading-tight">PRITONN v{APP_VERSION}</div>
               <div className="text-[10px] text-[var(--tg-text-muted)]">Сквозное шифрование & WebSockets</div>
             </div>
           </div>
